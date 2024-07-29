@@ -38,6 +38,7 @@ class FileWatcher:
         self.conn = sqlite3.connect(str(self.db_path))
         self.create_table_if_necessary()
         self.event_queue = asyncio.Queue()
+        self.stop_event = asyncio.Event()
         self.nats_url = nats_url
         self.nats_client: nats.NATS | None = None
         self.jetstream = None
@@ -127,6 +128,12 @@ class FileWatcher:
                 (str(file_path), file_hash, tag),
             )
 
+    def remove_from_db(self, file_path: Path):
+        with self.conn:
+            self.conn.execute(
+                "DELETE FROM watched_files WHERE path = ?", (str(file_path),)
+            )
+
     async def send_event(
         self, event_type: str, file_path: Path, tag: str, file_hash: str
     ):
@@ -143,15 +150,24 @@ class FileWatcher:
         )
 
     async def process_events(self):
-        while True:
-            event_type, path, tag = await self.event_queue.get()
-            if event_type in ("created", "modified"):
-                await self.process_file(Path(path), tag)
-            elif event_type == "deleted":
-                await self.send_event("file.deleted", Path(path), tag, "")
-            elif event_type == "moved":
-                await self.send_event("file.moved", Path(path), tag, "")
-            self.event_queue.task_done()
+        while not self.stop_event.is_set():
+            try:
+                event_type, path, tag = await asyncio.wait_for(
+                    self.event_queue.get(), timeout=1.0
+                )
+                if event_type in ("created", "modified"):
+                    await self.process_file(Path(path), tag)
+                elif event_type == "deleted":
+                    self.remove_from_db(Path(path))
+                    await self.send_event("file.deleted", Path(path), tag, "")
+                elif event_type == "moved":
+                    src_path, dest_path = path
+                    self.remove_from_db(Path(src_path))
+                    await self.process_file(Path(dest_path), tag)
+                    await self.send_event("file.moved", Path(dest_path), tag, "")
+                self.event_queue.task_done()
+            except asyncio.TimeoutError:
+                continue
 
     async def watch_directories(self):
         observer = Observer()
@@ -164,10 +180,11 @@ class FileWatcher:
             while True:
                 try:
                     command_msg = await self.command_sub.next_msg(timeout=1)
-                    command = command_msg.subject.split(".")[-1]
+                    command = command_msg.subject.split(".")[2]
                     if command == "rescan":
                         await self.rescan()
                     elif command == "stop":
+                        self.stop_event.set()
                         break
                 except TimeoutError:
                     continue
@@ -188,8 +205,14 @@ class FileWatcher:
         await self.connect_nats()
         await self.scan_directories()
         event_processor = asyncio.create_task(self.process_events())
-        await self.watch_directories()
-        await event_processor
+        watch_task = asyncio.create_task(self.watch_directories())
+
+        await asyncio.gather(watch_task, event_processor)
+
+        # Clean up
+        if self.nats_client:
+            await self.nats_client.close()
+        self.conn.close()
 
 
 class FileEventHandler(FileSystemEventHandler):
@@ -207,7 +230,9 @@ class FileEventHandler(FileSystemEventHandler):
         self.file_watcher.event_queue.put_nowait(("deleted", event.src_path, self.tag))
 
     def on_moved(self, event):
-        self.file_watcher.event_queue.put_nowait(("moved", event.dest_path, self.tag))
+        self.file_watcher.event_queue.put_nowait(
+            ("moved", (event.src_path, event.dest_path), self.tag)
+        )
 
 
 @click.command()
