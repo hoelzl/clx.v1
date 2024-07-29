@@ -1,34 +1,47 @@
 services:
-  nats:
-    image: nats:latest
-    ports:
-      - "4222:4222"
-    networks:
-      - app-network
+    nats:
+        image: nats:latest
+        ports:
+            - "4222:4222"
+            - "6222:6222"
+            - "8222:8222"
+        command: "-c /etc/nats/nats-server.conf"
+        volumes:
+            - ./nats-server.conf:/etc/nats/nats-server.conf
+        networks:
+            - app-network
 
-  nats-init:
-    build: ./nats-init
-    depends_on:
-      nats:
-        condition: service_started
-    environment:
-      - NATS_URL=nats://nats:4222
-    networks:
-      - app-network
+    nats-init:
+        build: ./nats-init
+        depends_on:
+            nats:
+                condition: service_started
+        environment:
+            - NATS_URL=nats://nats:4222
+        networks:
+            - app-network
 
-  file_watcher:
-    build:
-      context: file_watcher
-    volumes:
-      - C:/tmp/watcher_test:/watched
-    depends_on:
-      nats-init:
-        condition: service_completed_successfully
-    environment:
-      - NATS_URL=nats://nats:4222
-    networks:
-      - app-network
+    nats-log:
+        build: ./nats-log
+        environment:
+            - NATS_URL=nats://nats:4222
+        networks:
+            - app-network
+
+    file_watcher:
+        build:
+            context: file_watcher
+        volumes:
+            - C:/tmp/watcher_test:/watched
+        depends_on:
+            nats-init:
+                condition: service_completed_successfully
+        environment:
+            - NATS_URL=nats://nats:4222
+            - LOG_LEVEL=DEBUG
+        networks:
+            - app-network
 
 networks:
-  app-network:
-    driver: bridge
+    app-network:
+        driver: bridge
