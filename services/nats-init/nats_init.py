@@ -4,6 +4,7 @@ import os
 
 import nats
 from nats.js.api import RetentionPolicy
+from nats.js.errors import NotFoundError
 
 # Set up logging
 
@@ -42,11 +43,18 @@ async def create_streams():
 async def create_stream(js, stream_name, event_prefix, **kwargs):
     try:
         if FORCE_DELETE_STREAMS:
-            await js.delete_stream(stream_name)
+            try:
+                logger.info(f"Force-deleting {stream_name} stream")
+                await js.delete_stream(stream_name)
+            except NotFoundError:
+                logger.info(f"{stream_name} stream does not exist")
         for i in range(5):
             try:
+                logger.debug(f"Trying to determine if stream {stream_name}  exists")
                 if await does_stream_exist(js, stream_name):
+                    logger.debug(f"Stream {stream_name} exists")
                     return
+                logger.debug(f"Stream {stream_name} does not exist, trying to create")
                 await js.add_stream(
                     name=stream_name,
                     subjects=[f"{event_prefix}.>"],
@@ -57,6 +65,11 @@ async def create_stream(js, stream_name, event_prefix, **kwargs):
             except TimeoutError as e:
                 logger.info(f"Timeout creating {stream_name} stream: {e}")
                 await asyncio.sleep(1)
+            except NotFoundError as e:
+                logger.info(
+                    f"No NATS server found when creating stream {stream_name}: {e}"
+                )
+            await asyncio.sleep(i)
     except Exception as e:
         logger.error(f"Error creating {stream_name} stream: {e}")
 
