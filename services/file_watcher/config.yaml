@@ -1,0 +1,7 @@
+watched_directories:
+  tag1:
+    path: C:\tmp\watcher_test\dir1
+    pattern: "*.txt"
+  tag2:
+    path: C:\tmp\watcher_test\dir2
+    pattern: "*.log"
