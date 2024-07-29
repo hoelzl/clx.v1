@@ -1,0 +1,34 @@
+services:
+  nats:
+    image: nats:latest
+    ports:
+      - "4222:4222"
+    networks:
+      - app-network
+
+  nats-init:
+    build: ./nats-init
+    depends_on:
+      nats:
+        condition: service_started
+    environment:
+      - NATS_URL=nats://nats:4222
+    networks:
+      - app-network
+
+  file_watcher:
+    build:
+      context: file_watcher
+    volumes:
+      - C:/tmp/watcher_test:/watched
+    depends_on:
+      nats-init:
+        condition: service_completed_successfully
+    environment:
+      - NATS_URL=nats://nats:4222
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge

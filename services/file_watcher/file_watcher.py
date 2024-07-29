@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import json
+import logging
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
@@ -70,7 +71,7 @@ class FileWatcher:
             )
 
     async def connect_nats(self):
-        self.nats_client = await nats.connect(self.nats_url)
+        await self.connect_client_with_retry()
         self.jetstream = self.nats_client.jetstream()
 
         try:
@@ -87,6 +88,17 @@ class FileWatcher:
             print(f"Stream COMMANDS already exists: {ex}", flush=True)
 
         self.command_sub = await self.nats_client.subscribe("command.watcher.>")
+
+    async def connect_client_with_retry(self, num_retries=5):
+        for i in range(num_retries):
+            try:
+                self.nats_client = await nats.connect(self.nats_url)
+                logging.info(f"Connected to NATS at {self.nats_url}")
+                return
+            except Exception as e:
+                logging.error(f"Error connecting to NATS: {e}")
+                await asyncio.sleep(2**i)
+        raise OSError("Could not connect to NATS")
 
     async def scan_directories(self):
         for watched_dir in self.config.values():

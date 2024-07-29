@@ -5,7 +5,6 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY file_watcher.py .
-COPY config.yaml .
+COPY nats_init.py .
 
-CMD ["python", "file_watcher.py", "--config", "config.yaml"]
+CMD ["python", "nats_init.py"]
