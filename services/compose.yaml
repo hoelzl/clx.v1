@@ -32,19 +32,40 @@ services:
         profiles:
             - debug
 
-    file_watcher:
+    file-watcher:
         build:
-            context: file_watcher
+            context: file-watcher
+        depends_on:
+            nats-init:
+                condition: service_completed_successfully
+        environment:
+            - NATS_URL=nats://nats:4222
+            - LOG_LEVEL=INFO
+            - CONFIG_PATH=/app/config.yaml
         volumes:
             - C:/tmp/watcher_test:/watched
+            - ./file-watcher/config.yaml:/app/config.yaml
+        networks:
+            - app-network
+
+    drawio-converter:
+        build:
+            context: ./drawio-converter
         depends_on:
             nats-init:
                 condition: service_completed_successfully
         environment:
             - NATS_URL=nats://nats:4222
             - LOG_LEVEL=DEBUG
+            - CONFIG_PATH=/app/config.yaml
+            - DISPLAY=:99
+        volumes:
+            - C:/tmp/watcher_test:/watched:rw
+            - ./drawio-converter/config.yaml:/app/config.yaml:ro
         networks:
             - app-network
+
+
 
 networks:
     app-network:

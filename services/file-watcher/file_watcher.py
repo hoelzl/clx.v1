@@ -173,6 +173,7 @@ class FileWatcher:
             "relative_path": str(file_path.relative_to(self.config[tag].path)),
             "full_path": str(file_path),
             "file_name": file_path.name,
+            "containing_dir": file_path.parent.name,
             "file_extension": file_path.suffix,
             "hash": file_hash,
         }

@@ -1,0 +1,7 @@
+drawio_tags:
+  - diagrams
+
+output_formats:
+  # SVG has problems with font embedding
+  # - svg
+  - png
