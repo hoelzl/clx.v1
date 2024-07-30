@@ -56,7 +56,7 @@ services:
                 condition: service_completed_successfully
         environment:
             - NATS_URL=nats://nats:4222
-            - LOG_LEVEL=DEBUG
+            - LOG_LEVEL=INFO
             - CONFIG_PATH=/app/config.yaml
             - DISPLAY=:99
         volumes:
@@ -64,7 +64,28 @@ services:
             - ./drawio-converter/config.yaml:/app/config.yaml:ro
         networks:
             - app-network
+        init: true
+        healthcheck:
+            test: [ "CMD", "bash", "-c", "xdpyinfo -display :99 >/dev/null 2>&1" ]
+            interval: 10s
+            timeout: 5s
+            retries: 3
 
+    plantuml-converter:
+        build:
+            context: ./plantuml-converter
+        depends_on:
+            nats-init:
+                condition: service_completed_successfully
+        environment:
+            - NATS_URL=nats://nats:4222
+            - LOG_LEVEL=DEBUG
+            - CONFIG_PATH=/app/config.yaml
+        volumes:
+            - C:/tmp/watcher_test:/watched:rw
+            - ./plantuml-converter/config.yaml:/app/config.yaml:ro
+        networks:
+            - app-network
 
 
 networks:

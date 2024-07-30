@@ -6,5 +6,5 @@ watched_directories:
     path: /watched/dir2
     pattern: "*.log"
   diagrams:
-    path: /watched/drawio
-    pattern: "*.drawio"
+    path: /watched/diagrams
+    pattern: "*"

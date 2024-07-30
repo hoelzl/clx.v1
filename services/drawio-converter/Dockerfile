@@ -3,6 +3,7 @@ FROM python:3.11-slim
 # Install drawio-desktop and dependencies
 COPY drawio-amd64-24.7.5.deb .
 RUN apt-get update && apt-get install -y \
+    dbus-x11 \
     nodejs \
     npm \
     libasound2 \
