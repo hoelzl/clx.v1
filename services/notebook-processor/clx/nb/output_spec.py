@@ -118,6 +118,8 @@ class OutputSpec(ABC):
                 return ".html"
             case "code":
                 return suffix_for(self.prog_lang)
+            case "edit_script":
+                return ".ahk"
             case _:
                 raise ValueError(
                     f"Could not extract file suffix from format {self.notebook_format}."
@@ -146,6 +148,8 @@ class OutputSpec(ABC):
                 return "html"
             case "code":
                 return jupytext_format_for(self.prog_lang)
+            case "edit_script":
+                return "py:percent"
             case _:
                 raise ValueError(
                     f"Could not extract jupytext format from format "
@@ -257,36 +261,6 @@ class SpeakerOutput(OutputSpec):
     """If we generate HTML for speakers we want to evaluate code cells."""
 
 
-@define
-class EditScriptOutput(OutputSpec):
-    """Output spec for edit scripts.
-
-    Edit scripts update codealong notebooks to completed notebooks.
-    """
-
-    def get_target_subdir_fragment(self) -> str:
-        return "edit_script"
-
-    tags_to_delete_cell = {"keep"}
-    """Delete cells that are kept by other formats and vice versa."""
-
-    delete_any_cell_contents = False
-    """If we include a cell, we want to keep its contents."""
-
-    def is_cell_included(self, cell: Cell) -> bool:
-        """Return whether the cell should be included or completely removed."""
-
-        if is_markdown_cell(cell):
-            return False
-        tags_to_delete = self.tags_to_delete_cell.intersection(get_tags(cell))
-        if tags_to_delete:
-            logging.debug(
-                f"Deleting cell '{cell.source[:20]}' because of tags {tags_to_delete}"
-            )
-            return False
-        return is_cell_included_for_language(cell, self.lang)
-
-
 def create_output_spec(spec_name: str, *args, **kwargs):
     """Create a spec given a name and init data.
 
@@ -312,8 +286,6 @@ def create_output_spec(spec_name: str, *args, **kwargs):
             spec_type = CodeAlongOutput
         case "speaker":
             spec_type = SpeakerOutput
-        case "editscript":
-            spec_type = EditScriptOutput
         case _:
             raise ValueError(
                 f"Unknown spec type: {spec_name!r}.\n"
@@ -328,14 +300,13 @@ def create_output_specs(prog_lang="python"):
         result.extend(
             [
                 CompletedOutput(lang, prog_lang=prog_lang, notebook_format="notebook"),
-                CompletedOutput(lang, prog_lang=prog_lang, notebook_format="html"),
                 CompletedOutput(lang, prog_lang=prog_lang, notebook_format="code"),
                 CodeAlongOutput(lang, prog_lang=prog_lang, notebook_format="notebook"),
-                CodeAlongOutput(lang, prog_lang=prog_lang, notebook_format="html"),
                 CodeAlongOutput(lang, prog_lang=prog_lang, notebook_format="code"),
                 SpeakerOutput(lang, prog_lang=prog_lang, notebook_format="notebook"),
+                CompletedOutput(lang, prog_lang=prog_lang, notebook_format="html"),
+                CodeAlongOutput(lang, prog_lang=prog_lang, notebook_format="html"),
                 SpeakerOutput(lang, prog_lang=prog_lang, notebook_format="html"),
-                EditScriptOutput(lang),
             ]
         )
     return result

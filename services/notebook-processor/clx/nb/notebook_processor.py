@@ -43,6 +43,7 @@ NATS_URL = os.environ.get("NATS_URL", "nats://localhost:4222")
 STREAM_NAME = os.environ.get("STREAM_NAME", "EVENTS")
 CONSUMER_NAME = os.environ.get("CONSUMER_NAME", "NOTEBOOK_PROCESSOR")
 SUBJECT = os.environ.get("SUBJECT", "event.file.*.notebooks.>")
+QUEUE_GROUP = os.environ.get("QUEUE_GROUP", "notebook_processor")
 NOTEBOOK_PREFIX = os.environ.get("NOTEBOOK_PREFIX", "module")
 NOTEBOOK_EXTENSION = os.environ.get("NOTEBOOK_EXTENSION", ".py")
 JINJA_LINE_STATEMENT_PREFIX = os.environ.get("JINJA_LINE_STATEMENT_PREFIX", "# j2")
@@ -86,10 +87,6 @@ async def connect_jetstream(nats_url: str) -> tuple[nats.NATS, JetStreamContext]
     except Exception as e:
         logger.fatal(f"Error connecting to NATS server: {str(e)}")
         raise
-
-
-def get_jinja_loader():
-    raise NotImplementedError("Jinja Template Loader not implemented.")
 
 
 async def is_notebook_file(input_path):
@@ -160,23 +157,25 @@ class NotebookProcessor:
         return Path(OUTPUT_DIR) / self.output_spec.path_fragment
 
     async def process_notebook(self, absolute_path, relativ_path, notebook_text):
-        expanded_nb = self.load_and_expand_jinja_template(notebook_text)
+        expanded_nb = await self.load_and_expand_jinja_template(notebook_text)
         suffix = self.output_spec.file_suffix
         output_path = (self.output_dir / relativ_path).with_suffix(suffix)
         processed_nb = self.process_notebook_for_spec(expanded_nb)
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        self.write_to_target(processed_nb, absolute_path, relativ_path, output_path)
+        await self.write_to_target(
+            processed_nb, absolute_path, relativ_path, output_path
+        )
         # with open(output_path, "w", encoding="utf-8") as file:
         #     jupytext.write(processed_nb, file, fmt=self.output_spec.jupytext_format)
         logger.info(f"Processed notebook written to: {output_path}")
 
-    def load_and_expand_jinja_template(self, notebook_text: str) -> str:
+    async def load_and_expand_jinja_template(self, notebook_text: str) -> str:
         jinja_env = self._create_jinja_environment()
         nb_template = jinja_env.from_string(
             notebook_text,
             globals=self._create_jinja_globals(self.output_spec),
         )
-        expanded_nb = nb_template.render()
+        expanded_nb = await nb_template.render_async()
         return expanded_nb
 
     @staticmethod
@@ -187,7 +186,7 @@ class NotebookProcessor:
             undefined=StrictUndefined,
             line_statement_prefix=JINJA_LINE_STATEMENT_PREFIX,
             keep_trailing_newline=True,
-            # enable_async=True,
+            enable_async=True,
         )
         return jinja_env
 
@@ -200,7 +199,7 @@ class NotebookProcessor:
         }
 
     def process_notebook_for_spec(self, expanded_nb: str) -> NotebookNode:
-        nb = jupytext.reads(expanded_nb, fmt=NOTEBOOK_EXTENSION[1:])
+        nb = jupytext.reads(expanded_nb)
         processed_nb = self._process_notebook_node(nb)
         return processed_nb
 
@@ -263,7 +262,7 @@ class NotebookProcessor:
             else:
                 cell["source"] = prefix
 
-    def write_to_target(
+    async def write_to_target(
         self,
         processed_nb: NotebookNode,
         absolute_path: str,
@@ -272,26 +271,28 @@ class NotebookProcessor:
     ):
         try:
             if self.output_spec.notebook_format == "html":
-                self._write_using_nbconvert(
+                await self._write_using_nbconvert(
                     processed_nb, absolute_path, relative_path, output_path
                 )
             else:
-                self._write_using_jupytext(processed_nb, relative_path, output_path)
+                await self._write_using_jupytext(
+                    processed_nb, relative_path, output_path
+                )
         except RuntimeError as err:
             logging.error(f"Failed to write notebook {relative_path} to HTML.")
             logging.error(err)
 
-    def _write_using_nbconvert(
+    async def _write_using_nbconvert(
         self, processed_nb, absolute_path, relative_path, output_path
     ):
-        body = self._create_html_contents(
+        body = await self._create_html_contents(
             processed_nb, absolute_path, relative_path, output_path
         )
         output_path.parent.mkdir(exist_ok=True, parents=True)
         with output_path.open("w") as html_file:
             html_file.write(body)
 
-    def _create_html_contents(
+    async def _create_html_contents(
         self, processed_nb, absolute_path, relative_path, output_path
     ):
         traitlets.log.get_logger().addFilter(DontWarnForMissingAltTags())
@@ -309,9 +310,13 @@ class NotebookProcessor:
                             "Proactor event loop does not implement add_reader",
                         )
                         ep = ExecutePreprocessor(timeout=None)
-                        ep.preprocess(
-                            processed_nb,
-                            resources={"metadata": {"path": absolute_path.parent}},
+                        loop = asyncio.get_running_loop()
+                        await loop.run_in_executor(
+                            None,
+                            lambda: ep.preprocess(
+                                processed_nb,
+                                resources={"metadata": {"path": absolute_path.parent}},
+                            ),
                         )
                 except Exception:
                     print(f"Error while processing {relative_path}!")
@@ -327,18 +332,16 @@ class NotebookProcessor:
         (body, _resources) = html_exporter.from_notebook_node(processed_nb)
         return body
 
-    def _write_using_jupytext(self, processed_nb, relative_path, output_path):
-        output = self._create_notebook_contents(
-            processed_nb, relative_path, output_path
-        )
+    async def _write_using_jupytext(self, processed_nb, relative_path, output_path):
+        output = self._create_notebook_contents(processed_nb)
         output_path.parent.mkdir(exist_ok=True, parents=True)
         logging.info(
             f"Writing notebook {relative_path!r} to {output_path.as_posix()!r}."
         )
-        with output_path.open("w", encoding="utf-8") as file:
-            file.write(output)
+        async with aiofiles.open(output_path, "w", encoding="utf-8") as file:
+            await file.write(output)
 
-    def _create_notebook_contents(self, processed_nb, relative_path, output_path):
+    def _create_notebook_contents(self, processed_nb):
         config = jupytext_config.JupytextConfiguration(
             notebook_metadata_filter="-all", cell_metadata_filter="-all"
         )
@@ -371,18 +374,18 @@ async def run_consumer(js: JetStreamContext):
     sub = None
     try:
         logging.debug(f"Trying to subscribe to {SUBJECT!r}")
-        sub = await js.pull_subscribe("event.file.*.notebooks", stream=STREAM_NAME)
+        sub = await js.subscribe(
+            "event.file.*.notebooks", stream=STREAM_NAME, queue=QUEUE_GROUP
+        )
         logging.info(f"Subscribed to {SUBJECT!r} on stream {STREAM_NAME!r}")
         while not shutdown_flag.is_set():
             try:
-                messages = await sub.fetch(1, timeout=5)
-                for msg in messages:
-                    await msg.ack()
-                    logging.debug(f"Received message: {msg}")
-                    await process_message(msg)
-                pass
+                msg = await sub.next_msg(timeout=1)
+                await msg.ack()
+                logging.debug(f"Received message: {msg}")
+                await process_message(msg)
             except nats.errors.TimeoutError:
-                logging.debug("No messages available")
+                # logging.debug("No messages available")
                 continue
     except Exception as e:
         logger.error(f"Consumer error: {e}")

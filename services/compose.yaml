@@ -130,17 +130,21 @@ services:
                 condition: service_completed_successfully
         environment:
             - NATS_URL=nats://nats:4222
-            - LOG_LEVEL=DEBUG
+            - LOG_LEVEL=INFO
             - INPUT_DIR=/input
             - OUTPUT_DIR=/output
             - STREAM_NAME=EVENTS
             - CONSUMER_NAME=NOTEBOOK_PROCESSOR
             - SUBJECT=event.file.*.notebooks.>
+            - QUEUE_GROUP=notebook-processor
             - NOTEBOOK_PREFIX=module
             - NOTEBOOK_EXTENSION=.py
         volumes:
             - C:/tmp/watcher_test:/input:ro
             - C:/tmp/watcher_test_output:/output:rw
+        deploy:
+            mode: replicated
+            replicas: 6
         networks:
             - app-network
         develop:
