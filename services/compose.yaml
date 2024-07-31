@@ -22,6 +22,13 @@ services:
             - NATS_URL=nats://nats:4222
         networks:
             - app-network
+        develop:
+            watch:
+                - action: sync+restart
+                  path: ./nats-init
+                  target: /app
+                - action: rebuild
+                  path: ./nats-init/requirements.txt
 
     nats-log:
         build: ./nats-log
@@ -31,6 +38,13 @@ services:
             - app-network
         profiles:
             - debug
+        develop:
+            watch:
+                - action: sync+restart
+                  path: ./nats-log
+                  target: /app
+                - action: rebuild
+                  path: ./nats-log/requirements.txt
 
     file-watcher:
         build:
@@ -43,10 +57,17 @@ services:
             - LOG_LEVEL=INFO
             - CONFIG_PATH=/app/config.yaml
         volumes:
-            - C:/tmp/watcher_test:/watched
+            - C:/tmp/watcher_test:/input
             - ./file-watcher/config.yaml:/app/config.yaml
         networks:
             - app-network
+        develop:
+            watch:
+                - action: sync+restart
+                  path: ./file-watcher
+                  target: /app
+                - action: rebuild
+                  path: ./file-watcher/requirements.txt
 
     drawio-converter:
         build:
@@ -60,7 +81,7 @@ services:
             - CONFIG_PATH=/app/config.yaml
             - DISPLAY=:99
         volumes:
-            - C:/tmp/watcher_test:/watched:rw
+            - C:/tmp/watcher_test:/input:rw
             - ./drawio-converter/config.yaml:/app/config.yaml:ro
         networks:
             - app-network
@@ -70,6 +91,13 @@ services:
             interval: 10s
             timeout: 5s
             retries: 3
+        develop:
+            watch:
+                - action: sync+restart
+                  path: ./drawio-converter
+                  target: /app
+                - action: rebuild
+                  path: ./drawio-converter/requirements.txt
 
     plantuml-converter:
         build:
@@ -82,11 +110,46 @@ services:
             - LOG_LEVEL=DEBUG
             - CONFIG_PATH=/app/config.yaml
         volumes:
-            - C:/tmp/watcher_test:/watched:rw
+            - C:/tmp/watcher_test:/input:rw
             - ./plantuml-converter/config.yaml:/app/config.yaml:ro
         networks:
             - app-network
+        develop:
+            watch:
+                - action: sync+restart
+                  path: ./plantuml-converter
+                  target: /app
+                - action: rebuild
+                  path: ./plantuml-converter/requirements.txt
 
+    notebook-processor:
+        build:
+            context: ./notebook-processor
+        depends_on:
+            nats-init:
+                condition: service_completed_successfully
+        environment:
+            - NATS_URL=nats://nats:4222
+            - LOG_LEVEL=DEBUG
+            - INPUT_DIR=/input
+            - OUTPUT_DIR=/output
+            - STREAM_NAME=EVENTS
+            - CONSUMER_NAME=NOTEBOOK_PROCESSOR
+            - SUBJECT=event.file.*.notebooks.>
+            - NOTEBOOK_PREFIX=module
+            - NOTEBOOK_EXTENSION=.py
+        volumes:
+            - C:/tmp/watcher_test:/input:ro
+            - C:/tmp/watcher_test_output:/output:rw
+        networks:
+            - app-network
+        develop:
+            watch:
+                - action: sync+restart
+                  path: ./notebook-processor
+                  target: /app
+                - action: rebuild
+                  path: ./notebook-processor/requirements.txt
 
 networks:
     app-network:

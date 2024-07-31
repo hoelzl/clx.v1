@@ -67,7 +67,7 @@ class PlantUMLConverter:
             logger.error("Missing required fields in message data")
 
     async def process_plantuml_file(self, data):
-        input_path = Path(data["full_path"])
+        input_path = Path(data["absolute_path"])
         output_dir = input_path.parent.parent / "img"
         logger.debug(f"Creating output directory: {output_dir}")
         output_dir.mkdir(exist_ok=True, parents=True)

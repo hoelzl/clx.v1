@@ -1,0 +1,31 @@
+{% macro header(title_de, title_en) -%}
+%% [markdown] lang="de" tags=["slide"]
+{% if is_notebook %}
+# <img src="data:image/png;base64,{% include "python-logo-no-text.base64" %}"
+#      style="display:block;margin:auto;width:10%"/>
+# <br>
+{% endif %}
+# <div style="text-align:center; font-size:200%;">
+#  <b>{{ title_de }}</b>
+# </div>
+# <br/>
+# <div style="text-align:center;">Dr. Matthias Hölzl</div>
+# <br/>
+# <!-- {{name}} -->
+# <!-- {{source_name}} -->
+
+# %% [markdown] lang="en" tags=["slide"]
+{% if is_notebook %}
+# <img src="data:image/png;base64,{% include "python-logo-no-text.base64" %}"
+#      style="display:block;margin:auto;width:10%"/>
+# <br>
+{% endif %}
+# <div style="text-align:center; font-size:200%;">
+#   <b>{{ title_en }}</b>
+# </div>
+# <br/>
+# <div style="text-align:center;">Dr. Matthias Hölzl</div>
+# <br/>
+# <!-- {{name}} -->
+# <!-- {{source_name}} -->
+{% endmacro -%}

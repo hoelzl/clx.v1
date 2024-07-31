@@ -1,10 +1,10 @@
 watched_directories:
   tag1:
-    path: /watched/dir1
+    path: /input/dir1
     pattern: "*.txt"
-  tag2:
-    path: /watched/dir2
-    pattern: "*.log"
+  notebooks:
+    path: /input/dir2
+    pattern: "*.py"
   diagrams:
-    path: /watched/diagrams
+    path: /input/diagrams
     pattern: "*"
