@@ -4,16 +4,21 @@ import logging
 import os
 import signal
 import sys
+import warnings
 from hashlib import sha3_224
 from pathlib import Path
 
 import aiofiles
+import jupytext.config as jupytext_config
 import nats
+import traitlets.log
 from jinja2 import Environment, PackageLoader, StrictUndefined
 from jupytext import jupytext
 from nats.aio.msg import Msg
 from nats.errors import NoServersError
 from nats.js.client import JetStreamContext
+from nbconvert import HTMLExporter
+from nbconvert.preprocessors import ExecutePreprocessor
 from nbformat import NotebookNode
 from nbformat.validator import normalize
 
@@ -133,9 +138,16 @@ async def process_file(absolute_path: str, relative_path: str):
 
         for output_spec in create_output_specs():
             processor = NotebookProcessor(output_spec)
-            await processor.process_notebook(relative_path, notebook_text)
+            await processor.process_notebook(
+                absolute_path, relative_path, notebook_text
+            )
     except Exception as e:
         logger.error(f"Error processing notebook {absolute_path}: {str(e)}")
+
+
+class DontWarnForMissingAltTags(logging.Filter):
+    def filter(self, record):
+        return "Alternative text is missing" not in record.getMessage()
 
 
 class NotebookProcessor:
@@ -147,14 +159,15 @@ class NotebookProcessor:
     def output_dir(self) -> Path:
         return Path(OUTPUT_DIR) / self.output_spec.path_fragment
 
-    async def process_notebook(self, file_path, notebook_text):
+    async def process_notebook(self, absolute_path, relativ_path, notebook_text):
         expanded_nb = self.load_and_expand_jinja_template(notebook_text)
         suffix = self.output_spec.file_suffix
-        output_path = (self.output_dir / file_path).with_suffix(suffix)
+        output_path = (self.output_dir / relativ_path).with_suffix(suffix)
         processed_nb = self.process_notebook_for_spec(expanded_nb)
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(output_path, "w", encoding="utf-8") as file:
-            jupytext.write(processed_nb, file, fmt=NOTEBOOK_EXTENSION[1:])
+        self.write_to_target(processed_nb, absolute_path, relativ_path, output_path)
+        # with open(output_path, "w", encoding="utf-8") as file:
+        #     jupytext.write(processed_nb, file, fmt=self.output_spec.jupytext_format)
         logger.info(f"Processed notebook written to: {output_path}")
 
     def load_and_expand_jinja_template(self, notebook_text: str) -> str:
@@ -249,6 +262,94 @@ class NotebookProcessor:
                 cell["source"] = prefix + cell["source"]
             else:
                 cell["source"] = prefix
+
+    def write_to_target(
+        self,
+        processed_nb: NotebookNode,
+        absolute_path: str,
+        relative_path: str,
+        output_path: Path,
+    ):
+        try:
+            if self.output_spec.notebook_format == "html":
+                self._write_using_nbconvert(
+                    processed_nb, absolute_path, relative_path, output_path
+                )
+            else:
+                self._write_using_jupytext(processed_nb, relative_path, output_path)
+        except RuntimeError as err:
+            logging.error(f"Failed to write notebook {relative_path} to HTML.")
+            logging.error(err)
+
+    def _write_using_nbconvert(
+        self, processed_nb, absolute_path, relative_path, output_path
+    ):
+        body = self._create_html_contents(
+            processed_nb, absolute_path, relative_path, output_path
+        )
+        output_path.parent.mkdir(exist_ok=True, parents=True)
+        with output_path.open("w") as html_file:
+            html_file.write(body)
+
+    def _create_html_contents(
+        self, processed_nb, absolute_path, relative_path, output_path
+    ):
+        traitlets.log.get_logger().addFilter(DontWarnForMissingAltTags())
+        if self.output_spec.evaluate_for_html:
+            if any(is_code_cell(cell) for cell in processed_nb.get("cells", [])):
+                logging.debug(
+                    f"Evaluating and writing notebook {relative_path!r} to {output_path}."
+                )
+                try:
+                    # To silence warnings about frozen modules...
+                    os.environ["PYDEVD_DISABLE_FILE_VALIDATION"] = "1"
+                    with warnings.catch_warnings():
+                        warnings.filterwarnings(
+                            "ignore",
+                            "Proactor event loop does not implement add_reader",
+                        )
+                        ep = ExecutePreprocessor(timeout=None)
+                        ep.preprocess(
+                            processed_nb,
+                            resources={"metadata": {"path": absolute_path.parent}},
+                        )
+                except Exception:
+                    print(f"Error while processing {relative_path}!")
+                    raise
+            else:
+                logging.debug(
+                    f"NotebookDataSource {relative_path} contains no code cells."
+                )
+        logging.info(
+            f"Writing notebook {relative_path!r} to {output_path.as_posix()!r}."
+        )
+        html_exporter = HTMLExporter(template_name="classic")
+        (body, _resources) = html_exporter.from_notebook_node(processed_nb)
+        return body
+
+    def _write_using_jupytext(self, processed_nb, relative_path, output_path):
+        output = self._create_notebook_contents(
+            processed_nb, relative_path, output_path
+        )
+        output_path.parent.mkdir(exist_ok=True, parents=True)
+        logging.info(
+            f"Writing notebook {relative_path!r} to {output_path.as_posix()!r}."
+        )
+        with output_path.open("w", encoding="utf-8") as file:
+            file.write(output)
+
+    def _create_notebook_contents(self, processed_nb, relative_path, output_path):
+        config = jupytext_config.JupytextConfiguration(
+            notebook_metadata_filter="-all", cell_metadata_filter="-all"
+        )
+        output = jupytext.writes(
+            processed_nb,
+            fmt=self.output_spec.jupytext_format,
+            config=config,
+        )
+        if not output.endswith("\n"):
+            output += "\n"
+        return output
 
 
 async def process_message(msg: Msg):

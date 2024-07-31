@@ -86,7 +86,7 @@ def suffix_for(prog_lang: str) -> str:
 
 def jupytext_format_for(prog_lang: str) -> str:
     try:
-        return config.prog_lang[prog_lang].jupytext_format
+        return config.prog_lang[prog_lang]["jupytext_format"]
     except KeyError:
         raise ValueError(f"Unsupported language: {prog_lang}")
 
