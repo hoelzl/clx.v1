@@ -375,14 +375,17 @@ async def run_consumer(js: JetStreamContext):
     try:
         logging.debug(f"Trying to subscribe to {SUBJECT!r}")
         sub = await js.subscribe(
-            "event.file.*.notebooks", stream=STREAM_NAME, queue=QUEUE_GROUP
+            "event.file.*.notebooks",
+            stream=STREAM_NAME,
+            queue=QUEUE_GROUP,
+            # pending_msgs_limit=1,
         )
         logging.info(f"Subscribed to {SUBJECT!r} on stream {STREAM_NAME!r}")
         while not shutdown_flag.is_set():
             try:
                 msg = await sub.next_msg(timeout=1)
-                await msg.ack()
                 logging.debug(f"Received message: {msg}")
+                await msg.ack()
                 await process_message(msg)
             except nats.errors.TimeoutError:
                 # logging.debug("No messages available")

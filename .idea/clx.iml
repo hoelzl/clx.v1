@@ -2,6 +2,12 @@
 <module type="PYTHON_MODULE" version="4">
   <component name="NewModuleRootManager">
     <content url="file://$MODULE_DIR$">
+      <sourceFolder url="file://$MODULE_DIR$/services/drawio-converter" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/services/file-watcher" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/services/nats-init" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/services/nats-log" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/services/notebook-processor" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/services/plantuml-converter" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/db" />
     </content>
     <orderEntry type="jdk" jdkName="clx" jdkType="Python SDK" />

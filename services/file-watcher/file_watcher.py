@@ -3,6 +3,7 @@ import hashlib
 import json
 import logging
 import os
+import signal
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
@@ -237,7 +238,7 @@ class FileWatcher:
         observer.start()
 
         try:
-            while True:
+            while not self.shutdown_event.is_set():
                 try:
                     command_msg = await self.command_sub.next_msg(timeout=1)
                     command = command_msg.subject.split(".")[2]
@@ -245,12 +246,10 @@ class FileWatcher:
                     if command == "rescan":
                         await self.rescan()
                     elif command == "shutdown":
-                        self.shutdown_event.set()
+                        await self.shutdown()
                         break
-                except TimeoutError:
+                except nats.errors.TimeoutError:
                     continue
-        except KeyboardInterrupt:
-            logger.info("Received keyboard interrupt. Shutting down...")
         finally:
             observer.stop()
             observer.join()
@@ -273,13 +272,29 @@ class FileWatcher:
         event_processor = asyncio.create_task(self.process_events())
         watch_task = asyncio.create_task(self.watch_directories())
 
-        await asyncio.gather(watch_task, event_processor)
+        # Set up signal handlers
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, lambda: asyncio.create_task(self.shutdown()))
 
-        # Clean up
-        if self.nats_client:
-            await self.nats_client.close()
-        self.conn.close()
-        logger.info("FileWatcher shut down successfully")
+        try:
+            await asyncio.gather(watch_task, event_processor)
+        finally:
+            # Clean up
+            if self.nats_client:
+                await self.nats_client.close()
+            self.conn.close()
+            logger.info("FileWatcher shut down successfully")
+
+    async def shutdown(self):
+        logger.info("Initiating shutdown...")
+        self.shutdown_event.set()
+        # Cancel all running tasks
+        tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        logger.info("All tasks cancelled")
 
 
 class FileEventHandler(FileSystemEventHandler):

@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import signal
 from pathlib import Path
 
 import nats
@@ -25,6 +26,7 @@ class PlantUMLConverter:
         self.plantuml_tags = {}
         self.nats_client: nats.NATS | None = None
         self.jetstream: JetStreamContext | None = None
+        self.shutdown_event = asyncio.Event()
         self.load_config()
 
     def load_config(self):
@@ -56,6 +58,8 @@ class PlantUMLConverter:
 
     async def handle_event(self, msg):
         try:
+            if self.shutdown_event.is_set():
+                return
             data = json.loads(msg.data.decode())
             if data["file_extension"] in [".pu", ".puml", ".plantuml"]:
                 await self.process_plantuml_file(data)
@@ -107,14 +111,25 @@ class PlantUMLConverter:
     async def run(self):
         await self.connect_nats()
         await self.subscribe_to_events()
+
+        # Set up signal handlers
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, lambda: asyncio.create_task(self.shutdown()))
+
         try:
-            while True:
-                await asyncio.sleep(1)
-        except KeyboardInterrupt:
-            logger.info("Received interrupt, shutting down...")
+            await self.shutdown_event.wait()
         finally:
-            if self.nats_client:
-                await self.nats_client.close()
+            await self.cleanup()
+
+    async def shutdown(self):
+        logger.info("Initiating shutdown...")
+        self.shutdown_event.set()
+
+    async def cleanup(self):
+        if self.nats_client:
+            await self.nats_client.close()
+        logger.info("PlantUML Converter shut down successfully")
 
 
 if __name__ == "__main__":
