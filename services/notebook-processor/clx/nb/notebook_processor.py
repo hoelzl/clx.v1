@@ -32,8 +32,8 @@ from .utils.jupyter_utils import (
 from .utils.prog_lang_utils import kernelspec_for, language_info
 
 # Configuration
-INPUT_DIR = os.environ.get("INPUT_DIR", "/input")
-OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "/output")
+INPUT_DIR = os.environ.get("INPUT_DIR", "C:/tmp/watcher_test")
+OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "C:/tmp/watcher_test_output")
 NATS_URL = os.environ.get("NATS_URL", "nats://localhost:4222")
 STREAM_NAME = os.environ.get("STREAM_NAME", "EVENTS")
 CONSUMER_NAME = os.environ.get("CONSUMER_NAME", "NOTEBOOK_PROCESSOR")
@@ -149,7 +149,8 @@ class NotebookProcessor:
 
     async def process_notebook(self, file_path, notebook_text):
         expanded_nb = self.load_and_expand_jinja_template(notebook_text)
-        output_path = self.output_dir / file_path
+        suffix = self.output_spec.file_suffix
+        output_path = (self.output_dir / file_path).with_suffix(suffix)
         processed_nb = self.process_notebook_for_spec(expanded_nb)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with open(output_path, "w", encoding="utf-8") as file:
@@ -173,6 +174,7 @@ class NotebookProcessor:
             undefined=StrictUndefined,
             line_statement_prefix=JINJA_LINE_STATEMENT_PREFIX,
             keep_trailing_newline=True,
+            # enable_async=True,
         )
         return jinja_env
 

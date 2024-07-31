@@ -113,9 +113,9 @@ class OutputSpec(ABC):
         """
         match self.notebook_format:
             case "notebook":
-                return "ipynb"
+                return ".ipynb"
             case "html":
-                return "html"
+                return ".html"
             case "code":
                 return suffix_for(self.prog_lang)
             case _:
@@ -338,3 +338,4 @@ def create_output_specs(prog_lang="python"):
                 EditScriptOutput(lang),
             ]
         )
+    return result
