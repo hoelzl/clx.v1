@@ -47,7 +47,7 @@ OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "C:/tmp/watcher_test_output")
 NATS_URL = os.environ.get("NATS_URL", "nats://localhost:4222")
 STREAM_NAME = os.environ.get("STREAM_NAME", "EVENTS")
 CONSUMER_NAME = os.environ.get("CONSUMER_NAME", "NOTEBOOK_PROCESSOR")
-SUBJECT = os.environ.get("SUBJECT", "event.file.*.notebooks.>")
+SUBJECT = os.environ.get("SUBJECT", "event.file.*.notebooks")
 QUEUE_GROUP = os.environ.get("QUEUE_GROUP", "NOTEBOOK_PROCESSOR")
 NOTEBOOK_PREFIX = os.environ.get("NOTEBOOK_PREFIX", "slides_")
 NOTEBOOK_EXTENSION = os.environ.get("NOTEBOOK_EXTENSION", ".py")
@@ -61,11 +61,12 @@ NOTEBOOK_FORMATS = string_to_list(
 OUTPUT_TYPES = string_to_list(
     os.environ.get("OUTPUT_TYPES", "completed,codealong,speaker")
 )
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
+LOG_CELL_PROCESSING = os.environ.get("LOG_CELL_PROCESSING", "False") == "True"
 
 # Logging setup
-log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
-    level=getattr(logging, log_level),
+    level=getattr(logging, LOG_LEVEL),
     format="%(asctime)s - notebook-processor - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
@@ -101,7 +102,7 @@ async def connect_jetstream(nats_url: str) -> tuple[nats.NATS, JetStreamContext]
         raise
 
 
-async def is_notebook_file(input_path):
+async def is_notebook_file(input_path: Path) -> bool:
     return (
         input_path.name.startswith(NOTEBOOK_PREFIX)
         and input_path.suffix == NOTEBOOK_EXTENSION
@@ -129,13 +130,15 @@ class CellIdGenerator:
                 break
 
 
-async def process_file(absolute_path: str, relative_path: str):
+async def process_file(
+    absolute_path: str, relative_path: str, action: str, old_path=None
+):
     absolute_path = Path(absolute_path)
     if not absolute_path.exists():
         logger.error(f"Input file does not exist: {absolute_path}")
         return
 
-    if await is_notebook_file(absolute_path):
+    if not await is_notebook_file(absolute_path):
         logger.debug(f"Skipping non-notebook file: {absolute_path}")
         return
 
@@ -152,11 +155,37 @@ async def process_file(absolute_path: str, relative_path: str):
             output_types=OUTPUT_TYPES,
         ):
             processor = NotebookProcessor(output_spec)
+            file_to_remove = old_file_path(output_spec, processor, old_path)
+            remove_old_file_if_moved(file_to_remove, action)
             await processor.process_notebook(
                 absolute_path, relative_path, notebook_text
             )
     except Exception as e:
         logger.error(f"Error processing notebook {absolute_path}: {str(e)}")
+
+
+def old_file_path(output_spec, processor, old_relative_path):
+    if not old_relative_path:
+        return None
+    logger.debug(f"Old relative path: {old_relative_path}")
+    logger.debug(f"Path fragment: {output_spec.path_fragment}")
+    old_file = (processor.output_dir / old_relative_path).with_suffix(
+        output_spec.file_suffix
+    )
+    logger.debug(f"Old file path: {old_file}")
+    return old_file
+
+
+def remove_old_file_if_moved(old_file, action):
+    if action == "moved":
+        if old_file.exists():
+            if old_file.is_dir():
+                logger.error(f"Old notebook is directory: {old_file}")
+            else:
+                logger.debug(f"Removing moved notebook: {old_file}")
+                old_file.unlink()
+        else:
+            logger.debug(f"Old notebook does not exist: {old_file}")
 
 
 class DontWarnForMissingAltTags(logging.Filter):
@@ -210,8 +239,8 @@ class NotebookProcessor:
     @staticmethod
     def _create_jinja_globals(output_spec):
         return {
-            "is_notebook": output_spec.file_suffix == "ipynb",
-            "is_html": output_spec.file_suffix == "html",
+            "is_notebook": output_spec.notebook_format == "notebook",
+            "is_html": output_spec.notebook_format == "html",
             "lang": output_spec.lang,
         }
 
@@ -234,7 +263,8 @@ class NotebookProcessor:
 
     def _process_cell(self, cell: Cell, index: int) -> Cell:
         self._generate_cell_metadata(cell, index)
-        logger.debug(f"Processing cell {cell}")
+        if LOG_CELL_PROCESSING:
+            logger.debug(f"Processing cell {cell}")
         if is_code_cell(cell):
             return self._process_code_cell(cell)
         elif is_markdown_cell(cell):
@@ -378,8 +408,11 @@ async def process_message(msg: Msg):
         logger.debug(f"Received message: {data}")
         absolute_path = data.get("absolute_path")
         relative_path = data.get("relative_path")
+        old_path = data.get("old_relative_path")
         if absolute_path and relative_path:
-            await process_file(absolute_path, relative_path)
+            await process_file(
+                absolute_path, relative_path, get_event_action(msg), old_path
+            )
     except Exception as e:
         logger.error(f"Error processing message: {str(e)}")
         # await msg.nak()
@@ -390,7 +423,7 @@ async def run_consumer(js: JetStreamContext):
     try:
         logger.debug(f"Trying to subscribe to {SUBJECT!r}")
         sub = await js.subscribe(
-            "event.file.*.notebooks",
+            SUBJECT,
             stream=STREAM_NAME,
             queue=QUEUE_GROUP,
             # pending_msgs_limit=1,
@@ -401,7 +434,7 @@ async def run_consumer(js: JetStreamContext):
                 msg = await sub.next_msg(timeout=1)
                 # logger.debug(f"Received message: {msg}")
                 await msg.ack()
-                if msg.subject.split(".")[2] in ["created", "updated", "moved"]:
+                if get_event_action(msg) in ["created", "modified", "moved"]:
                     await process_message(msg)
                 else:
                     logger.debug(f"Ignoring message with subject: {msg.subject}")
@@ -414,6 +447,10 @@ async def run_consumer(js: JetStreamContext):
         if sub:
             logger.debug("Unsubscribing from subscription")
             await sub.unsubscribe()
+
+
+def get_event_action(msg):
+    return msg.subject.split(".")[2]
 
 
 async def shutdown_handler():

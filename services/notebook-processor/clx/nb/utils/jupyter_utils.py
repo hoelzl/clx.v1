@@ -135,9 +135,9 @@ def is_cell_included_for_language(cell: Cell, lang: str) -> bool:
     if not cell_lang or cell_lang == lang:
         return True
     else:
-        logging.debug(
-            f"Skipping cell '{cell.source[:20]}' with language {cell_lang!r} for language {lang!r}."
-        )
+        # logging.debug(
+        #     f"Skipping cell '{cell.source[:20]}' with language {cell_lang!r} for language {lang!r}."
+        # )
         return False
 
 

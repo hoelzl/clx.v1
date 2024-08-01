@@ -7,9 +7,8 @@ x-notebook-processor-base: &notebook-processor-base
         nats-init:
             condition: service_completed_successfully
     volumes:
-        - C:\Users\tc\Programming\Python\Courses\Own\PythonCoursesNew\slides:/input/slides:ro
-        - C:\Users\tc\Programming\Python\Courses\Own\PythonCoursesNew\staging:/input/staging:rw
-        - C:\Users\tc\Programming\Python\Courses\Own\PythonCoursesNew\output:/output:rw
+        - C:\Users\tc\Programming\Python\Courses\Own\PythonCoursesNew\slides:/slides:ro
+        - C:\Users\tc\Programming\Python\Courses\Own\PythonCoursesNew\staging:/staging:rw
     networks:
         - app-network
     develop:
@@ -75,11 +74,11 @@ services:
                 condition: service_completed_successfully
         environment:
             - NATS_URL=nats://nats:4222
-            - LOG_LEVEL=INFO
+            - LOG_LEVEL=DEBUG
             - CONFIG_PATH=/app/config.yaml
             - DB_PATH=/clx-db/watched_files.db
         volumes:
-            - C:\Users\tc\Programming\Python\Courses\Own\PythonCoursesNew\slides:/input/slides:ro
+            - C:\Users\tc\Programming\Python\Courses\Own\PythonCoursesNew\slides:/slides:ro
             - C:\Users\tc\Programming\Python\Courses\Own\PythonCoursesNew\staging:/input/staging:ro
             - ./file-watcher/config.yaml:/app/config.yaml
             - clx-db:/clx-db
@@ -105,7 +104,7 @@ services:
             - CONFIG_PATH=/app/config.yaml
             - DISPLAY=:99
         volumes:
-            - C:\Users\tc\Programming\Python\Courses\Own\PythonCoursesNew\slides:/input/slides:rw
+            - C:\Users\tc\Programming\Python\Courses\Own\PythonCoursesNew\slides:/slides:rw
             - ./drawio-converter/config.yaml:/app/config.yaml:ro
         networks:
             - app-network
@@ -137,7 +136,7 @@ services:
             - LOG_LEVEL=INFO
             - CONFIG_PATH=/app/config.yaml
         volumes:
-            - C:\Users\tc\Programming\Python\Courses\Own\PythonCoursesNew\slides:/input/slides:rw
+            - C:\Users\tc\Programming\Python\Courses\Own\PythonCoursesNew\slides:/slides:rw
             - ./plantuml-converter/config.yaml:/app/config.yaml:ro
         networks:
             - app-network
@@ -152,16 +151,48 @@ services:
             mode: replicated
             replicas: 6
 
+    staging-copier:
+        build:
+            context: ./staging-copier
+        depends_on:
+            nats-init:
+                condition: service_completed_successfully
+        environment:
+            - NATS_URL=nats://nats:4222
+            - LOG_LEVEL=DEBUG
+            - INPUT_DIR=/input
+            - OUTPUT_DIR=/staging
+            - STREAM_NAME=EVENTS
+            - CONSUMER_NAME=STAGING_COPIER
+            - SUBJECT=event.file.*.staging
+            - NOTEBOOK_EXTENSION=.py
+            - PROG_LANG=python
+            - QUEUE_GROUP=STAGING_COPIER_CODE
+            - LANGUAGES=de,en
+            - NOTEBOOK_FORMATS=notebook,code,html
+            - OUTPUT_TYPES=completed,codealong
+        volumes:
+            - C:\Users\tc\Programming\Python\Courses\Own\PythonCoursesNew\slides:/slides:ro
+            - C:\Users\tc\Programming\Python\Courses\Own\PythonCoursesNew\staging:/staging:rw
+        networks:
+            - app-network
+        develop:
+            watch:
+                -   action: sync+restart
+                    path: ./staging-copier
+                    target: /app
+                -   action: rebuild
+                    path: ./staging-copier/requirements.txt
+
     nb-notebook:
         <<: *notebook-processor-base
         environment:
             - NATS_URL=nats://nats:4222
-            - LOG_LEVEL=INFO
+            - LOG_LEVEL=DEBUG
             - INPUT_DIR=/input
-            - OUTPUT_DIR=/output
+            - OUTPUT_DIR=/staging
             - STREAM_NAME=EVENTS
-            - SUBJECT=event.file.*.notebooks.>
-            - NOTEBOOK_PREFIX=module
+            - SUBJECT=event.file.*.notebooks
             - NOTEBOOK_EXTENSION=.py
             - PROG_LANG=python
             - QUEUE_GROUP=NOTEBOOK_PROCESSOR_NB
@@ -178,11 +209,10 @@ services:
             - NATS_URL=nats://nats:4222
             - LOG_LEVEL=INFO
             - INPUT_DIR=/input
-            - OUTPUT_DIR=/output
+            - OUTPUT_DIR=/staging
             - STREAM_NAME=EVENTS
             - CONSUMER_NAME=NOTEBOOK_PROCESSOR
-            - SUBJECT=event.file.*.notebooks.>
-            - NOTEBOOK_PREFIX=module
+            - SUBJECT=event.file.*.notebooks
             - NOTEBOOK_EXTENSION=.py
             - PROG_LANG=python
             - QUEUE_GROUP=NOTEBOOK_PROCESSOR_CODE
@@ -199,11 +229,10 @@ services:
             - NATS_URL=nats://nats:4222
             - LOG_LEVEL=INFO
             - INPUT_DIR=/input
-            - OUTPUT_DIR=/output
+            - OUTPUT_DIR=/staging
             - STREAM_NAME=EVENTS
             - CONSUMER_NAME=NOTEBOOK_PROCESSOR
-            - SUBJECT=event.file.*.notebooks.>
-            - NOTEBOOK_PREFIX=module
+            - SUBJECT=event.file.*.notebooks
             - NOTEBOOK_EXTENSION=.py
             - PROG_LANG=python
             - QUEUE_GROUP=NOTEBOOK_PROCESSOR_HTML_DE_COMPLETED
@@ -226,11 +255,10 @@ services:
             - NATS_URL=nats://nats:4222
             - LOG_LEVEL=INFO
             - INPUT_DIR=/input
-            - OUTPUT_DIR=/output
+            - OUTPUT_DIR=/staging
             - STREAM_NAME=EVENTS
             - CONSUMER_NAME=NOTEBOOK_PROCESSOR
-            - SUBJECT=event.file.*.notebooks.>
-            - NOTEBOOK_PREFIX=module
+            - SUBJECT=event.file.*.notebooks
             - NOTEBOOK_EXTENSION=.py
             - PROG_LANG=python
             - QUEUE_GROUP=NOTEBOOK_PROCESSOR_HTML_EN_COMPLETED
@@ -253,11 +281,10 @@ services:
             - NATS_URL=nats://nats:4222
             - LOG_LEVEL=INFO
             - INPUT_DIR=/input
-            - OUTPUT_DIR=/output
+            - OUTPUT_DIR=/staging
             - STREAM_NAME=EVENTS
             - CONSUMER_NAME=NOTEBOOK_PROCESSOR
-            - SUBJECT=event.file.*.notebooks.>
-            - NOTEBOOK_PREFIX=module
+            - SUBJECT=event.file.*.notebooks
             - NOTEBOOK_EXTENSION=.py
             - PROG_LANG=python
             - QUEUE_GROUP=NOTEBOOK_PROCESSOR_HTML_DE_CODEALONG
@@ -280,11 +307,10 @@ services:
             - NATS_URL=nats://nats:4222
             - LOG_LEVEL=INFO
             - INPUT_DIR=/input
-            - OUTPUT_DIR=/output
+            - OUTPUT_DIR=/staging
             - STREAM_NAME=EVENTS
             - CONSUMER_NAME=NOTEBOOK_PROCESSOR
-            - SUBJECT=event.file.*.notebooks.>
-            - NOTEBOOK_PREFIX=module
+            - SUBJECT=event.file.*.notebooks
             - NOTEBOOK_EXTENSION=.py
             - PROG_LANG=python
             - QUEUE_GROUP=NOTEBOOK_PROCESSOR_HTML_EN_CODEALONG
@@ -307,11 +333,10 @@ services:
             - NATS_URL=nats://nats:4222
             - LOG_LEVEL=INFO
             - INPUT_DIR=/input
-            - OUTPUT_DIR=/output
+            - OUTPUT_DIR=/staging
             - STREAM_NAME=EVENTS
             - CONSUMER_NAME=NOTEBOOK_PROCESSOR
-            - SUBJECT=event.file.*.notebooks.>
-            - NOTEBOOK_PREFIX=module
+            - SUBJECT=event.file.*.notebooks
             - NOTEBOOK_EXTENSION=.py
             - PROG_LANG=python
             - QUEUE_GROUP=NOTEBOOK_PROCESSOR_HTML_DE_SPEAKER
@@ -334,11 +359,10 @@ services:
             - NATS_URL=nats://nats:4222
             - LOG_LEVEL=INFO
             - INPUT_DIR=/input
-            - OUTPUT_DIR=/output
+            - OUTPUT_DIR=/staging
             - STREAM_NAME=EVENTS
             - CONSUMER_NAME=NOTEBOOK_PROCESSOR
-            - SUBJECT=event.file.*.notebooks.>
-            - NOTEBOOK_PREFIX=module
+            - SUBJECT=event.file.*.notebooks
             - NOTEBOOK_EXTENSION=.py
             - PROG_LANG=python
             - QUEUE_GROUP=NOTEBOOK_PROCESSOR_HTML_EN_SPEAKER

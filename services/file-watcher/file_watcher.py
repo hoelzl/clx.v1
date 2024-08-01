@@ -48,7 +48,7 @@ class FileWatcher:
         self.db_path = db_path
         self.ensure_db_exists()
         self.conn = sqlite3.connect(str(self.db_path))
-        self.create_table_if_necessary()
+        self.create_tables_if_necessary()
         self.event_queue = asyncio.Queue()
         self.shutdown_event = asyncio.Event()
         self.nats_url = nats_url
@@ -72,18 +72,28 @@ class FileWatcher:
             self.db_path.touch()
             logger.info(f"Created new database file at {self.db_path}")
 
-    def create_table_if_necessary(self):
+    def create_tables_if_necessary(self):
         with self.conn:
             self.conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS watched_files (
-                    path TEXT PRIMARY KEY,
+                    path TEXT,
                     hash TEXT,
-                    tag TEXT
+                    tag TEXT,
+                    PRIMARY KEY (path, tag)
                 )
-            """
+                """
             )
-        logger.debug("Ensured 'watched_files' table exists in the database")
+            self.conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS watched_directories (
+                    path TEXT,
+                    tag TEXT,
+                    PRIMARY KEY (path, tag)
+                )
+                """
+            )
+        logger.debug("Ensured tables exists in the database")
 
     async def connect_nats(self):
         await self.connect_client_with_retry()
@@ -109,7 +119,7 @@ class FileWatcher:
             logger.debug(f"Scanning directory: {watched_dir.path}")
             for pattern in watched_dir.patterns:
                 for file_path in watched_dir.path.glob(pattern):
-                    await self.process_file(
+                    await self.process_file_or_directory(
                         file_path, watched_dir.tag, initial_scan=True
                     )
         logger.info("Directory scan completed")
@@ -118,25 +128,72 @@ class FileWatcher:
         watched_dir = self.config[tag]
         return any(file_path.match(pattern) for pattern in watched_dir.patterns)
 
-    async def process_file(self, file_path: Path, tag: str, initial_scan=False):
+    async def process_file_or_directory(
+        self, file_path: Path, tag: str, initial_scan=False
+    ):
         if not self.file_matches_pattern(file_path, tag):
             logger.debug(
-                f"Skipping file {file_path} as it doesn't match the pattern "
-                f"for tag {tag}"
+                f"{tag}: Skipping file {file_path} as it doesn't match the pattern"
             )
             return
 
-        file_hash = await self.compute_hash(file_path)
-        existing_hash = self.get_hash_from_db(file_path)
+        logger.debug(f"{tag}: Processing file or directory {file_path}")
+        if file_path.is_dir():
+            await self.process_directory(file_path, initial_scan, tag)
+        else:
+            await self.process_file(file_path, initial_scan, tag)
 
+    async def process_directory(self, dir_path: Path, initial_scan, tag):
+        if not self.is_directory_in_db(dir_path):
+            self.add_directory_to_db(dir_path, tag)
+            await self.send_event("directory.created", dir_path, tag, "")
+        elif initial_scan:
+            await self.send_event("file.unchanged", dir_path, tag, "")
+
+    async def process_file(self, file_path, initial_scan, tag):
+        file_hash = await self.compute_hash(file_path)
+        existing_hash = self.get_hash_from_db(file_path, tag)
         if existing_hash is None:
+            logger.debug(f"{tag}: File created: {file_path}")
             self.update_hash_in_db(file_path, file_hash, tag)
             await self.send_event("file.created", file_path, tag, file_hash)
         elif existing_hash != file_hash:
+            logger.debug(f"{tag}: File modified: {file_path}")
             self.update_hash_in_db(file_path, file_hash, tag)
-            await self.send_event("file.updated", file_path, tag, file_hash)
+            await self.send_event("file.modified", file_path, tag, file_hash)
         elif initial_scan:
+            logger.debug(f"{tag}: File unchanged: {file_path}")
             await self.send_event("file.unchanged", file_path, tag, file_hash)
+
+    def is_directory_in_db(self, dir_path: Path) -> bool:
+        with self.conn:
+            cursor = self.conn.execute(
+                "SELECT path FROM watched_directories WHERE path = ?", (str(dir_path),)
+            )
+            result = cursor.fetchone()
+        return result is not None
+
+    def remove_from_db(self, dir_path: Path, tag: str):
+        if dir_path.is_dir():
+            self.remove_directory_from_db(dir_path, tag)
+        else:
+            self.remove_hash_from_db(dir_path, tag)
+
+    def add_directory_to_db(self, dir_path: Path, tag: str):
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO watched_directories (path, tag) VALUES (?, ?)",
+                (str(dir_path), tag),
+            )
+        logger.debug(f"{tag}: Added directory to database: {dir_path}")
+
+    def remove_directory_from_db(self, dir_path: Path, tag: str):
+        with self.conn:
+            self.conn.execute(
+                "DELETE FROM watched_directories WHERE path = ? AND tag = ?",
+                (str(dir_path), tag),
+            )
+        logger.debug(f"Removed directory from database: {dir_path}")
 
     @staticmethod
     async def compute_hash(file_path: Path) -> str:
@@ -144,10 +201,11 @@ class FileWatcher:
             file_content = await f.read()
         return hashlib.md5(file_content).hexdigest()
 
-    def get_hash_from_db(self, file_path: Path) -> str:
+    def get_hash_from_db(self, file_path: Path, tag: str) -> str:
         with self.conn:
             cursor = self.conn.execute(
-                "SELECT hash FROM watched_files WHERE path = ?", (str(file_path),)
+                "SELECT hash FROM watched_files WHERE path = ? AND tag = ?",
+                (str(file_path), tag),
             )
             result = cursor.fetchone()
         return result[0] if result else None
@@ -161,78 +219,115 @@ class FileWatcher:
                 ),
                 (str(file_path), file_hash, tag),
             )
-        logger.debug(f"Updated hash in database for file: {file_path}")
+        logger.debug(f"{tag}: Updated hash in database: {file_path}")
 
-    def remove_from_db(self, file_path: Path):
+    def remove_hash_from_db(self, file_path: Path, tag):
         with self.conn:
             self.conn.execute(
-                "DELETE FROM watched_files WHERE path = ?", (str(file_path),)
+                "DELETE FROM watched_files WHERE path = ? AND tag =?",
+                (str(file_path), tag),
             )
-        logger.debug(f"Removed file from database: {file_path}")
+        logger.debug(f"{tag}: Removed file from database: {file_path}")
 
     async def send_event(
-        self, event_type: str, file_path: Path, tag: str, file_hash: str
+        self,
+        event_type: str,
+        file_path: Path,
+        tag: str,
+        file_hash: str,
+        old_path: Path | None = None,
     ):
+        logger.debug(f"{tag}: Sending event: {event_type} for file: {file_path}")
+        try:
+            old_relative_path = (
+                str(old_path.relative_to(self.config[tag].path)) if old_path else ""
+            )
+            old_absolute_path = str(old_path.absolute()) if old_path else ""
+        except ValueError:
+            old_relative_path = ""
+            old_absolute_path = ""
         payload = {
             "tag": tag,
             "relative_path": str(file_path.relative_to(self.config[tag].path)),
             "absolute_path": str(file_path.absolute()),
+            "old_relative_path": old_relative_path,
+            "old_absolute_path": old_absolute_path,
             "file_name": file_path.name,
             "containing_dir": file_path.parent.name,
             "file_extension": file_path.suffix,
             "hash": file_hash,
         }
+        event = f"event.{event_type}.{tag}"
+        # logger.debug(f"{tag}: Sending {event} for file: {file_path}: {payload}")
+        await self.jetstream.publish(event, json.dumps(payload).encode())
+        logger.debug(f"{tag}: Sent {event} for file: {file_path}")
 
-        logger.debug(f"Sending event: {event_type} for file: {file_path}")
-        logger.debug(f"Payload: {payload}")
-        await self.jetstream.publish(
-            f"event.{event_type}.{tag}", json.dumps(payload).encode()
-        )
-        logger.debug(f"Sent event: {event_type} for file: {file_path}")
-
-    async def process_events(self):
-        logger.info("Starting event processing")
+    async def process_file_watcher_events(self):
+        logger.info("Starting file-watcher event processing")
         try:
             while not self.shutdown_event.is_set():
                 try:
                     event_type, path, tag = await asyncio.wait_for(
                         self.event_queue.get(), timeout=1.0
                     )
-                    logger.debug(f"Processing event: {event_type} for {path}")
+                    logger.debug(f"{tag}: Processing event {event_type!r}: {path}")
                     if event_type in ("created", "modified", "deleted"):
                         file_path = Path(path)
                         if self.file_matches_pattern(file_path, tag):
                             if event_type in ("created", "modified"):
-                                await self.process_file(file_path, tag)
+                                logger.debug(
+                                    f"{tag}: Event type {event_type!r}: Processing "
+                                    f"file or directory: {file_path}"
+                                )
+                                await self.process_file_or_directory(file_path, tag)
                             elif event_type == "deleted":
-                                self.remove_from_db(file_path)
+                                logger.debug(
+                                    f"{tag}: Event type 'deleted': removing from db: "
+                                    f"{file_path}"
+                                )
+                                self.remove_hash_from_db(file_path, tag)
                                 await self.send_event(
                                     "file.deleted", file_path, tag, ""
                                 )
-                                logger.debug(f"File deleted: {path}")
+                                logger.debug(f"{tag}: File deleted: {path}")
+                            else:
+                                logger.error(
+                                    f"{tag}: Unknown event type: {event_type!r}"
+                                )
                         else:
                             logger.debug(
-                                f"Skipping {event_type} event for {path} "
-                                "as it doesn't match the pattern"
+                                f"{tag}: Skipping {event_type!r} for {path}: "
+                                "doesn't match the pattern"
                             )
                     elif event_type == "moved":
                         src_path, dest_path = path
+
                         src_matches = self.file_matches_pattern(Path(src_path), tag)
                         dest_matches = self.file_matches_pattern(Path(dest_path), tag)
                         if src_matches or dest_matches:
-                            self.remove_from_db(Path(src_path))
-                            await self.process_file(Path(dest_path), tag)
-                            await self.send_event(
-                                "file.moved", Path(dest_path), tag, ""
+                            logger.debug(
+                                f"{tag}: Event type is 'moved': {src_path} -> "
+                                f"{dest_path}"
                             )
-                            logger.debug(f"File moved from {src_path} to {dest_path}")
+                            self.remove_hash_from_db(Path(src_path), tag)
+                            await self.process_file_or_directory(Path(dest_path), tag)
+                            await self.send_event(
+                                "file.moved",
+                                Path(dest_path),
+                                tag,
+                                "",
+                                old_path=Path(src_path),
+                            )
+                            logger.debug(
+                                f"{tag}: File moved from {src_path} to {dest_path}"
+                            )
                         else:
                             logger.debug(
-                                f"Skipping move event for {src_path} to {dest_path} "
-                                "as neither matches the pattern"
+                                f"{tag}: Skipping move event: {src_path} -> "
+                                f"{dest_path} as neither matches the pattern"
                             )
                     else:
-                        logger.error(f"Unknown event type: {event_type}")
+                        logger.error(f"{tag}: Unknown event type: {event_type}")
                     self.event_queue.task_done()
                 except asyncio.TimeoutError:
                     continue
@@ -279,7 +374,7 @@ class FileWatcher:
         self.conn.close()
         self.db_path.unlink(missing_ok=True)
         self.conn = sqlite3.connect(str(self.db_path))
-        self.create_table_if_necessary()
+        self.create_tables_if_necessary()
         await self.scan_directories()
         logger.info("Reset completed")
 
@@ -287,8 +382,8 @@ class FileWatcher:
         logger.info("Starting FileWatcher")
         await self.connect_nats()
         logger.debug("Connected to NATS")
-        await self.scan_directories()
-        event_processor = asyncio.create_task(self.process_events())
+        # await self.scan_directories()
+        event_processor = asyncio.create_task(self.process_file_watcher_events())
         watch_task = asyncio.create_task(self.watch_directories())
 
         # Set up signal handlers
@@ -323,37 +418,33 @@ class FileEventHandler(FileSystemEventHandler):
 
     def on_created(self, event):
         src_path = Path(event.src_path)
-        if src_path.is_file() and self.file_watcher.file_matches_pattern(
-            src_path, self.tag
-        ):
-            logger.debug(f"File created: {event.src_path}")
+        if self.file_watcher.file_matches_pattern(src_path, self.tag):
+            logger.debug(f"{self.tag}: Creation event: {event.src_path}")
             self.file_watcher.event_queue.put_nowait(
                 ("created", event.src_path, self.tag)
             )
         else:
-            logger.debug(f"Skipping creation event for {event.src_path}")
+            logger.debug(f"{self.tag}: Skipping creation event: {event.src_path}")
 
     def on_modified(self, event):
         src_path = Path(event.src_path)
-        if src_path.is_file() and self.file_watcher.file_matches_pattern(
-            src_path, self.tag
-        ):
-            logger.debug(f"File modified: {event.src_path}")
+        if self.file_watcher.file_matches_pattern(src_path, self.tag):
+            logger.debug(f"{self.tag}: Modification event: {event.src_path}")
             self.file_watcher.event_queue.put_nowait(
                 ("modified", event.src_path, self.tag)
             )
         else:
-            logger.debug(f"Skipping modification event for {event.src_path}")
+            logger.debug(f"{self.tag}: Skipping modification event: {event.src_path}")
 
     def on_deleted(self, event):
         src_path = Path(event.src_path)
         if self.file_watcher.file_matches_pattern(src_path, self.tag):
-            logger.debug(f"File deleted: {event.src_path}")
+            logger.debug(f"{self.tag}: Deletion event: {event.src_path}")
             self.file_watcher.event_queue.put_nowait(
                 ("deleted", event.src_path, self.tag)
             )
         else:
-            logger.debug(f"Skipping deletion event for {event.src_path}")
+            logger.debug(f"{self.tag}: Skipping deletion event: {event.src_path}")
 
     def on_moved(self, event):
         src_path = Path(event.src_path)
@@ -362,13 +453,16 @@ class FileEventHandler(FileSystemEventHandler):
             self.file_watcher.file_matches_pattern(src_path, self.tag)
             or self.file_watcher.file_matches_pattern(dest_path, self.tag)
         ):
-            logger.debug(f"File moved from {event.src_path} to {event.dest_path}")
+            logger.debug(
+                f"{self.tag}: Move event: {event.src_path} -> {event.dest_path}"
+            )
             self.file_watcher.event_queue.put_nowait(
                 ("moved", (event.src_path, event.dest_path), self.tag)
             )
         else:
             logger.debug(
-                f"Skipping move event from {event.src_path} to {event.dest_path}"
+                f"{self.tag}: Skipping move event: {event.src_path} -> "
+                f"{event.dest_path}"
             )
 
 

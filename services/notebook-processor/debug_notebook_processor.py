@@ -8,7 +8,7 @@ src = "C:/tmp/watcher_test/dir2/module-1.py"
 
 # %%
 async def test_process_file():
-    await process_file(src, "dir2/module-1.py")
+    await process_file(src, "dir2/module-1.py", "modified", "")
 
 
 # %%

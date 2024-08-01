@@ -72,7 +72,7 @@ class PlantUMLConverter:
         try:
             if self.shutdown_event.is_set():
                 return
-            if msg.subject.split(".")[2] in ["created", "updated", "moved"]:
+            if msg.subject.split(".")[2] in ["created", "modified", "moved"]:
                 data = json.loads(msg.data.decode())
                 if data["file_extension"] in [".pu", ".puml", ".plantuml"]:
                     await self.process_plantuml_file(data)

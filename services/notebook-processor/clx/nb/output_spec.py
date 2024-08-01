@@ -164,9 +164,9 @@ class OutputSpec(ABC):
         """
         tags_to_delete = self.tags_to_delete_cell.intersection(get_tags(cell))
         if tags_to_delete:
-            logging.debug(
-                f"Deleting cell '{cell.source[:20]}' because of tags {tags_to_delete}"
-            )
+            # logging.debug(
+            #     f"Deleting cell '{cell.source[:20]}' because of tags {tags_to_delete}"
+            # )
             return False
         return is_cell_included_for_language(cell, self.lang)
 
