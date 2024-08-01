@@ -67,7 +67,7 @@ class DrawioConverter:
 
     async def handle_event(self, msg):
         try:
-            if msg.subject.split(".")[2] in ["created", "updated"]:
+            if msg.subject.split(".")[2] in ["created", "updated", "moved"]:
                 data = json.loads(msg.data.decode())
                 if data["file_extension"] == ".drawio":
                     await self.process_drawio_file(data)

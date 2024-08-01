@@ -2,7 +2,7 @@ watched_directories:
     notebooks:
         path: /input/slides
         patterns:
-            - "**/topic_*.py"
+            - "**/slides_*.py"
     diagrams:
         path: /input/slides
         patterns:

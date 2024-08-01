@@ -49,7 +49,7 @@ STREAM_NAME = os.environ.get("STREAM_NAME", "EVENTS")
 CONSUMER_NAME = os.environ.get("CONSUMER_NAME", "NOTEBOOK_PROCESSOR")
 SUBJECT = os.environ.get("SUBJECT", "event.file.*.notebooks.>")
 QUEUE_GROUP = os.environ.get("QUEUE_GROUP", "NOTEBOOK_PROCESSOR")
-NOTEBOOK_PREFIX = os.environ.get("NOTEBOOK_PREFIX", "module")
+NOTEBOOK_PREFIX = os.environ.get("NOTEBOOK_PREFIX", "slides_")
 NOTEBOOK_EXTENSION = os.environ.get("NOTEBOOK_EXTENSION", ".py")
 JINJA_LINE_STATEMENT_PREFIX = os.environ.get("JINJA_LINE_STATEMENT_PREFIX", "# j2")
 JINJA_TEMPLATES_FOLDER = os.environ.get("JINJA_TEMPLATES_FOLDER", "templates_python")
@@ -103,8 +103,8 @@ async def connect_jetstream(nats_url: str) -> tuple[nats.NATS, JetStreamContext]
 
 async def is_notebook_file(input_path):
     return (
-        not input_path.name.startswith(NOTEBOOK_PREFIX)
-        or input_path.suffix != NOTEBOOK_EXTENSION
+        input_path.name.startswith(NOTEBOOK_PREFIX)
+        and input_path.suffix == NOTEBOOK_EXTENSION
     )
 
 
@@ -374,12 +374,10 @@ class NotebookProcessor:
 
 async def process_message(msg: Msg):
     try:
-        # await msg.in_progress()
         data = json.loads(msg.data.decode())
         logger.debug(f"Received message: {data}")
         absolute_path = data.get("absolute_path")
         relative_path = data.get("relative_path")
-        # await msg.ack()
         if absolute_path and relative_path:
             await process_file(absolute_path, relative_path)
     except Exception as e:
@@ -401,9 +399,12 @@ async def run_consumer(js: JetStreamContext):
         while not shutdown_flag.is_set():
             try:
                 msg = await sub.next_msg(timeout=1)
-                logger.debug(f"Received message: {msg}")
+                # logger.debug(f"Received message: {msg}")
                 await msg.ack()
-                await process_message(msg)
+                if msg.subject.split(".")[2] in ["created", "updated", "moved"]:
+                    await process_message(msg)
+                else:
+                    logger.debug(f"Ignoring message with subject: {msg.subject}")
             except nats.errors.TimeoutError:
                 # logger.debug("No messages available")
                 continue
