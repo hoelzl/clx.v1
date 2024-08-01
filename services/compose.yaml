@@ -212,7 +212,13 @@ services:
             - OUTPUT_TYPES=completed
         deploy:
             mode: replicated
-            replicas: 6
+            replicas: 2
+            resources:
+                reservations:
+                    devices:
+                        -   driver: nvidia
+                            capabilities: [gpu]
+                            count: 1
 
     nb-html-en-completed:
         <<: *notebook-processor-base
@@ -233,7 +239,13 @@ services:
             - OUTPUT_TYPES=completed
         deploy:
             mode: replicated
-            replicas: 6
+            replicas: 2
+            resources:
+                reservations:
+                    devices:
+                        -   driver: nvidia
+                            capabilities: [gpu]
+                            count: 1
 
     nb-html-de-codealong:
         <<: *notebook-processor-base
@@ -254,7 +266,13 @@ services:
             - OUTPUT_TYPES=codealong
         deploy:
             mode: replicated
-            replicas: 6
+            replicas: 2
+            resources:
+                reservations:
+                    devices:
+                        -   driver: nvidia
+                            capabilities: [gpu]
+                            count: 1
 
     nb-html-en-codealong:
         <<: *notebook-processor-base
@@ -275,7 +293,13 @@ services:
             - OUTPUT_TYPES=codealong
         deploy:
             mode: replicated
-            replicas: 6
+            replicas: 2
+            resources:
+                reservations:
+                    devices:
+                        -   driver: nvidia
+                            capabilities: [gpu]
+                            count: 1
 
     nb-html-de-speaker:
         <<: *notebook-processor-base
@@ -296,7 +320,13 @@ services:
             - OUTPUT_TYPES=speaker
         deploy:
             mode: replicated
-            replicas: 6
+            replicas: 2
+            resources:
+                reservations:
+                    devices:
+                        -   driver: nvidia
+                            capabilities: [gpu]
+                            count: 1
 
     nb-html-en-speaker:
         <<: *notebook-processor-base
@@ -317,7 +347,13 @@ services:
             - OUTPUT_TYPES=speaker
         deploy:
             mode: replicated
-            replicas: 6
+            replicas: 2
+            resources:
+                reservations:
+                    devices:
+                        -   driver: nvidia
+                            capabilities: [gpu]
+                            count: 1
 
 volumes:
     clx-db:
