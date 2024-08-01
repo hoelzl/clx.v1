@@ -10,10 +10,15 @@ import yaml
 from nats.js import JetStreamContext
 from nats.js.api import DeliverPolicy
 
+# Configuration
+CONFIG_PATH = os.environ.get("CONFIG_PATH", "config.yaml")
+NATS_URL = os.environ.get("NATS_URL", "nats://nats:4222")
+QUEUE_GROUP = os.environ.get("QUEUE_GROUP", "PLANTUML_CONVERTER")
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
+
 # Set up logging
-log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
-    level=getattr(logging, log_level),
+    level=getattr(logging, LOG_LEVEL),
     format="%(asctime)s - plantuml-converter - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
@@ -51,20 +56,32 @@ class PlantUMLConverter:
     async def subscribe_to_events(self):
         for tag in self.plantuml_tags:
             subject = f"event.file.*.{tag}"
+            queue = f"{QUEUE_GROUP}_{tag}"
+            logger.debug(f"Subscribing to subject: {subject} on queue group {queue}")
             await self.jetstream.subscribe(
-                subject, cb=self.handle_event, deliver_policy=DeliverPolicy.ALL
+                subject,
+                cb=self.handle_event,
+                deliver_policy=DeliverPolicy.ALL,
+                queue=queue,
+                stream="EVENTS",
             )
             logger.info(f"Subscribed to subject: {subject}")
 
     async def handle_event(self, msg):
+        logger.debug(f"Handling event {msg.subject}")
         try:
             if self.shutdown_event.is_set():
                 return
-            data = json.loads(msg.data.decode())
-            if data["file_extension"] in [".pu", ".puml", ".plantuml"]:
-                await self.process_plantuml_file(data)
+            if msg.subject.split(".")[2] in ["created", "updated"]:
+                data = json.loads(msg.data.decode())
+                if data["file_extension"] in [".pu", ".puml", ".plantuml"]:
+                    await self.process_plantuml_file(data)
+                else:
+                    logger.debug(
+                        f"Skipping file with extension: {data['file_extension']}"
+                    )
             else:
-                logger.debug(f"Skipping file with extension: {data['file_extension']}")
+                logger.debug(f"Skipping event type: {msg.subject.split('.')[2]}")
         except json.JSONDecodeError:
             logger.error("Failed to decode message data")
         except KeyError:
@@ -133,8 +150,5 @@ class PlantUMLConverter:
 
 
 if __name__ == "__main__":
-    config_path = os.environ.get("CONFIG_PATH", "config.yaml")
-    nats_url = os.environ.get("NATS_URL", "nats://nats:4222")
-
-    converter = PlantUMLConverter(config_path, nats_url)
+    converter = PlantUMLConverter(CONFIG_PATH, NATS_URL)
     asyncio.run(converter.run())

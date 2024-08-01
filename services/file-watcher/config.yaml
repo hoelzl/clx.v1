@@ -1,10 +1,18 @@
 watched_directories:
-  tag1:
-    path: /input/dir1
-    pattern: "*.txt"
-  notebooks:
-    path: /input/dir2
-    pattern: "*.py"
-  diagrams:
-    path: /input/diagrams
-    pattern: "*"
+    notebooks:
+        path: /input/slides
+        patterns:
+            - "**/topic_*.py"
+    diagrams:
+        path: /input/slides
+        patterns:
+            - "**/*.pu"
+            - "**/*.drawio"
+    images:
+        path: /input/slides
+        patterns:
+            - "**/*.png"
+            - "**/*.svg"
+            - "**/*.jpg"
+            - "**/*.jpeg"
+            - "**/*.gif"

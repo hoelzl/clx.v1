@@ -18,7 +18,7 @@ from watchdog.observers.polling import PollingObserver as Observer
 
 CONFIG_PATH = os.environ.get("CONFIG_PATH", "config.yaml")
 NATS_URL = os.environ.get("NATS_URL", "nats://nats:4222")
-DB_PATH = os.environ.get("DB_PATH", "watched_files.db")
+DB_PATH = os.environ.get("DB_PATH", "/clx-db/watched_files.db")
 
 # Set up logging
 log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 class WatchedDirectory:
     tag: str
     path: Path
-    pattern: str
+    patterns: list[str]
 
 
 class FileWatcher:
@@ -63,7 +63,7 @@ class FileWatcher:
             config = yaml.safe_load(f)
         logger.debug(f"Loaded configuration from {config_path}")
         return {
-            tag: WatchedDirectory(tag, Path(directory["path"]), directory["pattern"])
+            tag: WatchedDirectory(tag, Path(directory["path"]), directory["patterns"])
             for tag, directory in config["watched_directories"].items()
         }
 
@@ -104,16 +104,19 @@ class FileWatcher:
         raise OSError("Could not connect to NATS")
 
     async def scan_directories(self):
-        logger.info("Starting initial directory scan")
+        logger.info("Starting directory scan")
         for watched_dir in self.config.values():
             logger.debug(f"Scanning directory: {watched_dir.path}")
-            for file_path in watched_dir.path.glob(watched_dir.pattern):
-                await self.process_file(file_path, watched_dir.tag, initial_scan=True)
-        logger.info("Initial directory scan completed")
+            for pattern in watched_dir.patterns:
+                for file_path in watched_dir.path.glob(pattern):
+                    await self.process_file(
+                        file_path, watched_dir.tag, initial_scan=True
+                    )
+        logger.info("Directory scan completed")
 
     def file_matches_pattern(self, file_path: Path, tag: str) -> bool:
         watched_dir = self.config[tag]
-        return file_path.match(watched_dir.pattern)
+        return any(file_path.match(pattern) for pattern in watched_dir.patterns)
 
     async def process_file(self, file_path: Path, tag: str, initial_scan=False):
         if not self.file_matches_pattern(file_path, tag):
@@ -243,7 +246,7 @@ class FileWatcher:
         for watched_dir in self.config.values():
             event_handler = FileEventHandler(self, watched_dir.tag)
             observer.schedule(event_handler, str(watched_dir.path), recursive=True)
-            logger.info(f"Watching directory: {watched_dir.path}")
+            logger.info(f"Watching for {watched_dir.tag} in {watched_dir.path}")
         observer.start()
 
         try:
@@ -254,8 +257,10 @@ class FileWatcher:
                     )
                     command = command_msg.subject.split(".")[2]
                     logger.info(f"Received command: {command}")
-                    if command == "rescan":
-                        await self.rescan()
+                    if command == "reset":
+                        await self.reset()
+                    elif command == "rescan":
+                        await self.scan_directories()
                     elif command == "shutdown":
                         await self.shutdown()
                         break
@@ -269,14 +274,14 @@ class FileWatcher:
             observer.join()
             logger.info("Directory watching stopped")
 
-    async def rescan(self):
-        logger.info("Initiating rescan")
+    async def reset(self):
+        logger.info("Initiating reset")
         self.conn.close()
         self.db_path.unlink(missing_ok=True)
         self.conn = sqlite3.connect(str(self.db_path))
         self.create_table_if_necessary()
         await self.scan_directories()
-        logger.info("Rescan completed")
+        logger.info("Reset completed")
 
     async def run(self):
         logger.info("Starting FileWatcher")

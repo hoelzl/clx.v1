@@ -7,8 +7,9 @@ x-notebook-processor-base: &notebook-processor-base
         nats-init:
             condition: service_completed_successfully
     volumes:
-        - C:/tmp/watcher_test:/input:ro
-        - C:/tmp/watcher_test_output:/output:rw
+        - C:\Users\tc\Programming\Python\Courses\Own\PythonCoursesNew\slides:/input/slides:ro
+        - C:\Users\tc\Programming\Python\Courses\Own\PythonCoursesNew\staging:/input/staging:rw
+        - C:\Users\tc\Programming\Python\Courses\Own\PythonCoursesNew\output:/output:rw
     networks:
         - app-network
     develop:
@@ -76,9 +77,12 @@ services:
             - NATS_URL=nats://nats:4222
             - LOG_LEVEL=INFO
             - CONFIG_PATH=/app/config.yaml
+            - DB_PATH=/clx-db/watched_files.db
         volumes:
-            - C:/tmp/watcher_test:/input
+            - C:\Users\tc\Programming\Python\Courses\Own\PythonCoursesNew\slides:/input/slides:ro
+            - C:\Users\tc\Programming\Python\Courses\Own\PythonCoursesNew\staging:/input/staging:ro
             - ./file-watcher/config.yaml:/app/config.yaml
+            - clx-db:/clx-db
         networks:
             - app-network
         develop:
@@ -101,7 +105,7 @@ services:
             - CONFIG_PATH=/app/config.yaml
             - DISPLAY=:99
         volumes:
-            - C:/tmp/watcher_test:/input:rw
+            - C:\Users\tc\Programming\Python\Courses\Own\PythonCoursesNew\slides:/input/slides:rw
             - ./drawio-converter/config.yaml:/app/config.yaml:ro
         networks:
             - app-network
@@ -118,6 +122,9 @@ services:
                     target: /app
                 -   action: rebuild
                     path: ./drawio-converter/requirements.txt
+        deploy:
+            mode: replicated
+            replicas: 2
 
     plantuml-converter:
         build:
@@ -130,7 +137,7 @@ services:
             - LOG_LEVEL=DEBUG
             - CONFIG_PATH=/app/config.yaml
         volumes:
-            - C:/tmp/watcher_test:/input:rw
+            - C:\Users\tc\Programming\Python\Courses\Own\PythonCoursesNew\slides:/input/slides:rw
             - ./plantuml-converter/config.yaml:/app/config.yaml:ro
         networks:
             - app-network
@@ -141,6 +148,9 @@ services:
                     target: /app
                 -   action: rebuild
                     path: ./plantuml-converter/requirements.txt
+        deploy:
+            mode: replicated
+            replicas: 6
 
     nb-notebook:
         <<: *notebook-processor-base
@@ -302,6 +312,9 @@ services:
         deploy:
             mode: replicated
             replicas: 2
+
+volumes:
+    clx-db:
 
 networks:
     app-network:

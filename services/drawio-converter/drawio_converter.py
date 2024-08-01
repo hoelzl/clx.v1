@@ -9,6 +9,9 @@ import yaml
 from nats.js import JetStreamContext
 from nats.js.api import DeliverPolicy
 
+# Configuration
+QUEUE_GROUP = os.environ.get("QUEUE_GROUP", "DRAWIO_CONVERTER")
+
 # Set up logging
 log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
@@ -51,16 +54,29 @@ class DrawioConverter:
     async def subscribe_to_events(self):
         for tag in self.drawio_tags:
             subject = f"event.file.*.{tag}"
+            queue = f"{QUEUE_GROUP}_{tag}"
+            logger.debug(f"Subscribing to subject: {subject} on queue group {queue}")
             await self.jetstream.subscribe(
-                subject, cb=self.handle_event, deliver_policy=DeliverPolicy.ALL
+                subject,
+                cb=self.handle_event,
+                deliver_policy=DeliverPolicy.ALL,
+                queue=queue,
+                stream="EVENTS",
             )
-            logger.info(f"Subscribed to subject: {subject}")
+            logger.info(f"Subscribed to subject: {subject} on queue group {queue}")
 
     async def handle_event(self, msg):
         try:
-            data = json.loads(msg.data.decode())
-            if data["file_extension"] == ".drawio":
-                await self.process_drawio_file(data)
+            if msg.subject.split(".")[2] in ["created", "updated"]:
+                data = json.loads(msg.data.decode())
+                if data["file_extension"] == ".drawio":
+                    await self.process_drawio_file(data)
+                else:
+                    logger.debug(
+                        f"Skipping file with extension: {data['file_extension']}"
+                    )
+            else:
+                logger.debug(f"Ignoring message with subject: {msg.subject}")
         except json.JSONDecodeError:
             logger.error("Failed to decode message data")
         except KeyError:
