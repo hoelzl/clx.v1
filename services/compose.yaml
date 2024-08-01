@@ -156,7 +156,7 @@ services:
         <<: *notebook-processor-base
         environment:
             - NATS_URL=nats://nats:4222
-            - LOG_LEVEL=DEBUG
+            - LOG_LEVEL=INFO
             - INPUT_DIR=/input
             - OUTPUT_DIR=/output
             - STREAM_NAME=EVENTS
@@ -168,6 +168,9 @@ services:
             - LANGUAGES=de,en
             - NOTEBOOK_FORMATS=notebook
             - OUTPUT_TYPES=completed,codealong,speaker
+        deploy:
+            mode: replicated
+            replicas: 4
 
     nb-code:
         <<: *notebook-processor-base
@@ -186,6 +189,9 @@ services:
             - LANGUAGES=de,en
             - NOTEBOOK_FORMATS=code
             - OUTPUT_TYPES=completed,codealong
+        deploy:
+            mode: replicated
+            replicas: 4
 
     nb-html-de-completed:
         <<: *notebook-processor-base
@@ -206,7 +212,7 @@ services:
             - OUTPUT_TYPES=completed
         deploy:
             mode: replicated
-            replicas: 2
+            replicas: 6
 
     nb-html-en-completed:
         <<: *notebook-processor-base
@@ -227,7 +233,7 @@ services:
             - OUTPUT_TYPES=completed
         deploy:
             mode: replicated
-            replicas: 2
+            replicas: 6
 
     nb-html-de-codealong:
         <<: *notebook-processor-base
@@ -248,7 +254,7 @@ services:
             - OUTPUT_TYPES=codealong
         deploy:
             mode: replicated
-            replicas: 2
+            replicas: 6
 
     nb-html-en-codealong:
         <<: *notebook-processor-base
@@ -269,7 +275,7 @@ services:
             - OUTPUT_TYPES=codealong
         deploy:
             mode: replicated
-            replicas: 2
+            replicas: 6
 
     nb-html-de-speaker:
         <<: *notebook-processor-base
@@ -290,7 +296,7 @@ services:
             - OUTPUT_TYPES=speaker
         deploy:
             mode: replicated
-            replicas: 2
+            replicas: 6
 
     nb-html-en-speaker:
         <<: *notebook-processor-base
@@ -311,7 +317,7 @@ services:
             - OUTPUT_TYPES=speaker
         deploy:
             mode: replicated
-            replicas: 2
+            replicas: 6
 
 volumes:
     clx-db:
