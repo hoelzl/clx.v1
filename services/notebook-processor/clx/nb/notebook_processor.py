@@ -36,6 +36,11 @@ from .utils.jupyter_utils import (
 )
 from .utils.prog_lang_utils import kernelspec_for, language_info
 
+
+def string_to_list(string: str) -> list[str]:
+    return [s.strip() for s in string.split(",")]
+
+
 # Configuration
 INPUT_DIR = os.environ.get("INPUT_DIR", "C:/tmp/watcher_test")
 OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "C:/tmp/watcher_test_output")
@@ -49,6 +54,13 @@ NOTEBOOK_EXTENSION = os.environ.get("NOTEBOOK_EXTENSION", ".py")
 JINJA_LINE_STATEMENT_PREFIX = os.environ.get("JINJA_LINE_STATEMENT_PREFIX", "# j2")
 JINJA_TEMPLATES_FOLDER = os.environ.get("JINJA_TEMPLATES_FOLDER", "templates_python")
 PROG_LANG = os.environ.get("PROG_LANG", "python")
+LANGUAGES = string_to_list(os.environ.get("LANGUAGES", "de,en"))
+NOTEBOOK_FORMATS = string_to_list(
+    os.environ.get("NOTEBOOK_FORMATS", "notebook,code,html")
+)
+OUTPUT_TYPES = string_to_list(
+    os.environ.get("OUTPUT_TYPES", "completed,codealong,speaker")
+)
 
 # Logging setup
 log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
@@ -124,16 +136,21 @@ async def process_file(absolute_path: str, relative_path: str):
         return
 
     if await is_notebook_file(absolute_path):
-        logger.info(f"Skipping non-notebook file: {absolute_path}")
+        logger.debug(f"Skipping non-notebook file: {absolute_path}")
         return
 
-    logger.info(f"Processing notebook: {absolute_path}")
+    logger.debug(f"Processing notebook: {absolute_path}")
 
     try:
         async with aiofiles.open(absolute_path, "r", encoding="utf-8") as file:
             notebook_text = await file.read()
 
-        for output_spec in create_output_specs():
+        for output_spec in create_output_specs(
+            prog_lang=PROG_LANG,
+            languages=LANGUAGES,
+            notebook_formats=NOTEBOOK_FORMATS,
+            output_types=OUTPUT_TYPES,
+        ):
             processor = NotebookProcessor(output_spec)
             await processor.process_notebook(
                 absolute_path, relative_path, notebook_text
@@ -165,9 +182,9 @@ class NotebookProcessor:
         await self.write_to_target(
             processed_nb, absolute_path, relativ_path, output_path
         )
-        # with open(output_path, "w", encoding="utf-8") as file:
-        #     jupytext.write(processed_nb, file, fmt=self.output_spec.jupytext_format)
-        logger.info(f"Processed notebook written to: {output_path}")
+        logger.debug(
+            f"Processed notebook {relativ_path}. Output written to: {output_path}"
+        )
 
     async def load_and_expand_jinja_template(self, notebook_text: str) -> str:
         jinja_env = self._create_jinja_environment()
@@ -217,7 +234,7 @@ class NotebookProcessor:
 
     def _process_cell(self, cell: Cell, index: int) -> Cell:
         self._generate_cell_metadata(cell, index)
-        logging.debug(f"Processing cell {cell}")
+        logger.debug(f"Processing cell {cell}")
         if is_code_cell(cell):
             return self._process_code_cell(cell)
         elif is_markdown_cell(cell):
@@ -298,7 +315,7 @@ class NotebookProcessor:
         traitlets.log.get_logger().addFilter(DontWarnForMissingAltTags())
         if self.output_spec.evaluate_for_html:
             if any(is_code_cell(cell) for cell in processed_nb.get("cells", [])):
-                logging.debug(
+                logger.debug(
                     f"Evaluating and writing notebook {relative_path!r} to {output_path}."
                 )
                 try:
@@ -322,10 +339,10 @@ class NotebookProcessor:
                     print(f"Error while processing {relative_path}!")
                     raise
             else:
-                logging.debug(
+                logger.debug(
                     f"NotebookDataSource {relative_path} contains no code cells."
                 )
-        logging.info(
+        logger.info(
             f"Writing notebook {relative_path!r} to {output_path.as_posix()!r}."
         )
         html_exporter = HTMLExporter(template_name="classic")
@@ -335,7 +352,7 @@ class NotebookProcessor:
     async def _write_using_jupytext(self, processed_nb, relative_path, output_path):
         output = self._create_notebook_contents(processed_nb)
         output_path.parent.mkdir(exist_ok=True, parents=True)
-        logging.info(
+        logger.info(
             f"Writing notebook {relative_path!r} to {output_path.as_posix()!r}."
         )
         async with aiofiles.open(output_path, "w", encoding="utf-8") as file:
@@ -359,7 +376,7 @@ async def process_message(msg: Msg):
     try:
         # await msg.in_progress()
         data = json.loads(msg.data.decode())
-        logging.debug(f"Received message: {data}")
+        logger.debug(f"Received message: {data}")
         absolute_path = data.get("absolute_path")
         relative_path = data.get("relative_path")
         # await msg.ack()
@@ -373,22 +390,22 @@ async def process_message(msg: Msg):
 async def run_consumer(js: JetStreamContext):
     sub = None
     try:
-        logging.debug(f"Trying to subscribe to {SUBJECT!r}")
+        logger.debug(f"Trying to subscribe to {SUBJECT!r}")
         sub = await js.subscribe(
             "event.file.*.notebooks",
             stream=STREAM_NAME,
             queue=QUEUE_GROUP,
             # pending_msgs_limit=1,
         )
-        logging.info(f"Subscribed to {SUBJECT!r} on stream {STREAM_NAME!r}")
+        logger.info(f"Subscribed to {SUBJECT!r} on stream {STREAM_NAME!r}")
         while not shutdown_flag.is_set():
             try:
                 msg = await sub.next_msg(timeout=1)
-                logging.debug(f"Received message: {msg}")
+                logger.debug(f"Received message: {msg}")
                 await msg.ack()
                 await process_message(msg)
             except nats.errors.TimeoutError:
-                # logging.debug("No messages available")
+                # logger.debug("No messages available")
                 continue
     except Exception as e:
         logger.error(f"Consumer error: {e}")

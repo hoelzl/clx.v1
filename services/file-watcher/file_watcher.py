@@ -10,14 +10,15 @@ from pathlib import Path
 from typing import Dict
 
 import aiofiles
-import click
 import nats
 import nats.errors
 import yaml
 from watchdog.events import FileSystemEventHandler
-
-# from watchdog.observers import Observer
 from watchdog.observers.polling import PollingObserver as Observer
+
+CONFIG_PATH = os.environ.get("CONFIG_PATH", "config.yaml")
+NATS_URL = os.environ.get("NATS_URL", "nats://nats:4222")
+DB_PATH = os.environ.get("DB_PATH", "watched_files.db")
 
 # Set up logging
 log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
@@ -60,7 +61,7 @@ class FileWatcher:
     def load_config(config_path: Path) -> Dict[str, WatchedDirectory]:
         with open(config_path, "r") as f:
             config = yaml.safe_load(f)
-        logger.info(f"Loaded configuration from {config_path}")
+        logger.debug(f"Loaded configuration from {config_path}")
         return {
             tag: WatchedDirectory(tag, Path(directory["path"]), directory["pattern"])
             for tag, directory in config["watched_directories"].items()
@@ -82,13 +83,13 @@ class FileWatcher:
                 )
             """
             )
-        logger.info("Ensured 'watched_files' table exists in the database")
+        logger.debug("Ensured 'watched_files' table exists in the database")
 
     async def connect_nats(self):
         await self.connect_client_with_retry()
         self.jetstream = self.nats_client.jetstream()
         self.command_sub = await self.nats_client.subscribe("command.watcher.>")
-        logger.info("Subscribed to command.watcher.> subject")
+        logger.debug("Subscribed to command.watcher.> subject")
 
     async def connect_client_with_retry(self, num_retries=5):
         for i in range(num_retries):
@@ -188,48 +189,56 @@ class FileWatcher:
 
     async def process_events(self):
         logger.info("Starting event processing")
-        while not self.shutdown_event.is_set():
-            try:
-                event_type, path, tag = await asyncio.wait_for(
-                    self.event_queue.get(), timeout=1.0
-                )
-                logger.debug(f"Processing event: {event_type} for {path}")
-                if event_type in ("created", "modified", "deleted"):
-                    file_path = Path(path)
-                    if self.file_matches_pattern(file_path, tag):
-                        if event_type in ("created", "modified"):
-                            await self.process_file(file_path, tag)
-                        elif event_type == "deleted":
-                            self.remove_from_db(file_path)
-                            await self.send_event("file.deleted", file_path, tag, "")
-                            logger.debug(f"File deleted: {path}")
+        try:
+            while not self.shutdown_event.is_set():
+                try:
+                    event_type, path, tag = await asyncio.wait_for(
+                        self.event_queue.get(), timeout=1.0
+                    )
+                    logger.debug(f"Processing event: {event_type} for {path}")
+                    if event_type in ("created", "modified", "deleted"):
+                        file_path = Path(path)
+                        if self.file_matches_pattern(file_path, tag):
+                            if event_type in ("created", "modified"):
+                                await self.process_file(file_path, tag)
+                            elif event_type == "deleted":
+                                self.remove_from_db(file_path)
+                                await self.send_event(
+                                    "file.deleted", file_path, tag, ""
+                                )
+                                logger.debug(f"File deleted: {path}")
+                        else:
+                            logger.debug(
+                                f"Skipping {event_type} event for {path} "
+                                "as it doesn't match the pattern"
+                            )
+                    elif event_type == "moved":
+                        src_path, dest_path = path
+                        src_matches = self.file_matches_pattern(Path(src_path), tag)
+                        dest_matches = self.file_matches_pattern(Path(dest_path), tag)
+                        if src_matches or dest_matches:
+                            self.remove_from_db(Path(src_path))
+                            await self.process_file(Path(dest_path), tag)
+                            await self.send_event(
+                                "file.moved", Path(dest_path), tag, ""
+                            )
+                            logger.debug(f"File moved from {src_path} to {dest_path}")
+                        else:
+                            logger.debug(
+                                f"Skipping move event for {src_path} to {dest_path} "
+                                "as neither matches the pattern"
+                            )
                     else:
-                        logger.debug(
-                            f"Skipping {event_type} event for {path} "
-                            "as it doesn't match the pattern"
-                        )
-                elif event_type == "moved":
-                    src_path, dest_path = path
-                    src_matches = self.file_matches_pattern(Path(src_path), tag)
-                    dest_matches = self.file_matches_pattern(Path(dest_path), tag)
-                    if src_matches or dest_matches:
-                        self.remove_from_db(Path(src_path))
-                        await self.process_file(Path(dest_path), tag)
-                        await self.send_event("file.moved", Path(dest_path), tag, "")
-                        logger.debug(f"File moved from {src_path} to {dest_path}")
-                    else:
-                        logger.debug(
-                            f"Skipping move event for {src_path} to {dest_path} "
-                            "as neither matches the pattern"
-                        )
-                else:
-                    logger.error(f"Unknown event type: {event_type}")
-                self.event_queue.task_done()
-            except asyncio.TimeoutError:
-                continue
+                        logger.error(f"Unknown event type: {event_type}")
+                    self.event_queue.task_done()
+                except asyncio.TimeoutError:
+                    continue
+        except asyncio.CancelledError:
+            logger.info("Event processing task cancelled")
+        logger.info("Event processing stopped")
 
     async def watch_directories(self):
-        logger.info("Starting directory watching")
+        logger.debug("Starting directory watching")
         observer = Observer()
         for watched_dir in self.config.values():
             event_handler = FileEventHandler(self, watched_dir.tag)
@@ -240,7 +249,9 @@ class FileWatcher:
         try:
             while not self.shutdown_event.is_set():
                 try:
-                    command_msg = await self.command_sub.next_msg(timeout=1)
+                    command_msg = await asyncio.wait_for(
+                        self.command_sub.next_msg(), timeout=1
+                    )
                     command = command_msg.subject.split(".")[2]
                     logger.info(f"Received command: {command}")
                     if command == "rescan":
@@ -248,8 +259,11 @@ class FileWatcher:
                     elif command == "shutdown":
                         await self.shutdown()
                         break
-                except nats.errors.TimeoutError:
+                except asyncio.TimeoutError:
                     continue
+                except asyncio.CancelledError:
+                    logger.info("Watch directories task cancelled")
+                    break
         finally:
             observer.stop()
             observer.join()
@@ -278,7 +292,7 @@ class FileWatcher:
             loop.add_signal_handler(sig, lambda: asyncio.create_task(self.shutdown()))
 
         try:
-            await asyncio.gather(watch_task, event_processor)
+            await asyncio.gather(watch_task, event_processor, return_exceptions=True)
         finally:
             # Clean up
             if self.nats_client:
@@ -353,28 +367,15 @@ class FileEventHandler(FileSystemEventHandler):
             )
 
 
-@click.command()
-@click.option(
-    "--config",
-    type=click.Path(exists=True),
-    required=True,
-    help="Path to the configuration file",
-)
-@click.option(
-    "--db-path",
-    type=click.Path(),
-    required=False,
-    default="watched_files.db",
-    help="Path to the SQLite database file",
-)
-def main(config, db_path):
-    logger.info(f"Starting FileWatcher with config: {config}")
-    absolute_db_path = Path(db_path).resolve()
-    nats_url = os.environ.get("NATS_URL", "nats://nats:4222")
-    file_watcher = FileWatcher(
-        Path(config), nats_url=nats_url, db_path=absolute_db_path
-    )
-    asyncio.run(file_watcher.run())
+def main():
+    logger.info(f"Starting FileWatcher with config: {CONFIG_PATH}")
+    db_path = Path(DB_PATH).resolve()
+    config_path = Path(CONFIG_PATH).resolve()
+    file_watcher = FileWatcher(config_path, nats_url=NATS_URL, db_path=db_path)
+    try:
+        asyncio.run(file_watcher.run())
+    except asyncio.CancelledError:
+        logger.info("FileWatcher cancelled")
 
 
 if __name__ == "__main__":

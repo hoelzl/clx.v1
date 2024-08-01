@@ -1,5 +1,25 @@
 name: clx
 
+x-notebook-processor-base: &notebook-processor-base
+    build:
+        context: ./notebook-processor
+    depends_on:
+        nats-init:
+            condition: service_completed_successfully
+    volumes:
+        - C:/tmp/watcher_test:/input:ro
+        - C:/tmp/watcher_test_output:/output:rw
+    networks:
+        - app-network
+    develop:
+        watch:
+            -   action: sync+restart
+                path: ./notebook-processor
+                target: /app
+            -   action: rebuild
+                path: ./notebook-processor/requirements.txt
+
+
 services:
     nats:
         image: nats:latest
@@ -24,11 +44,11 @@ services:
             - app-network
         develop:
             watch:
-                - action: sync+restart
-                  path: ./nats-init
-                  target: /app
-                - action: rebuild
-                  path: ./nats-init/requirements.txt
+                -   action: sync+restart
+                    path: ./nats-init
+                    target: /app
+                -   action: rebuild
+                    path: ./nats-init/requirements.txt
 
     nats-log:
         build: ./nats-log
@@ -40,11 +60,11 @@ services:
             - debug
         develop:
             watch:
-                - action: sync+restart
-                  path: ./nats-log
-                  target: /app
-                - action: rebuild
-                  path: ./nats-log/requirements.txt
+                -   action: sync+restart
+                    path: ./nats-log
+                    target: /app
+                -   action: rebuild
+                    path: ./nats-log/requirements.txt
 
     file-watcher:
         build:
@@ -63,11 +83,11 @@ services:
             - app-network
         develop:
             watch:
-                - action: sync+restart
-                  path: ./file-watcher
-                  target: /app
-                - action: rebuild
-                  path: ./file-watcher/requirements.txt
+                -   action: sync+restart
+                    path: ./file-watcher
+                    target: /app
+                -   action: rebuild
+                    path: ./file-watcher/requirements.txt
 
     drawio-converter:
         build:
@@ -93,11 +113,11 @@ services:
             retries: 3
         develop:
             watch:
-                - action: sync+restart
-                  path: ./drawio-converter
-                  target: /app
-                - action: rebuild
-                  path: ./drawio-converter/requirements.txt
+                -   action: sync+restart
+                    path: ./drawio-converter
+                    target: /app
+                -   action: rebuild
+                    path: ./drawio-converter/requirements.txt
 
     plantuml-converter:
         build:
@@ -116,18 +136,31 @@ services:
             - app-network
         develop:
             watch:
-                - action: sync+restart
-                  path: ./plantuml-converter
-                  target: /app
-                - action: rebuild
-                  path: ./plantuml-converter/requirements.txt
+                -   action: sync+restart
+                    path: ./plantuml-converter
+                    target: /app
+                -   action: rebuild
+                    path: ./plantuml-converter/requirements.txt
 
-    notebook-processor:
-        build:
-            context: ./notebook-processor
-        depends_on:
-            nats-init:
-                condition: service_completed_successfully
+    nb-notebook:
+        <<: *notebook-processor-base
+        environment:
+            - NATS_URL=nats://nats:4222
+            - LOG_LEVEL=INFO
+            - INPUT_DIR=/input
+            - OUTPUT_DIR=/output
+            - STREAM_NAME=EVENTS
+            - SUBJECT=event.file.*.notebooks.>
+            - NOTEBOOK_PREFIX=module
+            - NOTEBOOK_EXTENSION=.py
+            - PROG_LANG=python
+            - QUEUE_GROUP=NOTEBOOK_PROCESSOR_NB
+            - LANGUAGES=de,en
+            - NOTEBOOK_FORMATS=notebook
+            - OUTPUT_TYPES=completed,codealong,speaker
+
+    nb-code:
+        <<: *notebook-processor-base
         environment:
             - NATS_URL=nats://nats:4222
             - LOG_LEVEL=INFO
@@ -136,24 +169,139 @@ services:
             - STREAM_NAME=EVENTS
             - CONSUMER_NAME=NOTEBOOK_PROCESSOR
             - SUBJECT=event.file.*.notebooks.>
-            - QUEUE_GROUP=notebook-processor
             - NOTEBOOK_PREFIX=module
             - NOTEBOOK_EXTENSION=.py
-        volumes:
-            - C:/tmp/watcher_test:/input:ro
-            - C:/tmp/watcher_test_output:/output:rw
+            - PROG_LANG=python
+            - QUEUE_GROUP=NOTEBOOK_PROCESSOR_CODE
+            - LANGUAGES=de,en
+            - NOTEBOOK_FORMATS=code
+            - OUTPUT_TYPES=completed,codealong
+
+    nb-html-de-completed:
+        <<: *notebook-processor-base
+        environment:
+            - NATS_URL=nats://nats:4222
+            - LOG_LEVEL=INFO
+            - INPUT_DIR=/input
+            - OUTPUT_DIR=/output
+            - STREAM_NAME=EVENTS
+            - CONSUMER_NAME=NOTEBOOK_PROCESSOR
+            - SUBJECT=event.file.*.notebooks.>
+            - NOTEBOOK_PREFIX=module
+            - NOTEBOOK_EXTENSION=.py
+            - PROG_LANG=python
+            - QUEUE_GROUP=NOTEBOOK_PROCESSOR_HTML_DE_COMPLETED
+            - LANGUAGES=de
+            - NOTEBOOK_FORMATS=html
+            - OUTPUT_TYPES=completed
         deploy:
             mode: replicated
-            replicas: 6
-        networks:
-            - app-network
-        develop:
-            watch:
-                - action: sync+restart
-                  path: ./notebook-processor
-                  target: /app
-                - action: rebuild
-                  path: ./notebook-processor/requirements.txt
+            replicas: 2
+
+    nb-html-en-completed:
+        <<: *notebook-processor-base
+        environment:
+            - NATS_URL=nats://nats:4222
+            - LOG_LEVEL=INFO
+            - INPUT_DIR=/input
+            - OUTPUT_DIR=/output
+            - STREAM_NAME=EVENTS
+            - CONSUMER_NAME=NOTEBOOK_PROCESSOR
+            - SUBJECT=event.file.*.notebooks.>
+            - NOTEBOOK_PREFIX=module
+            - NOTEBOOK_EXTENSION=.py
+            - PROG_LANG=python
+            - QUEUE_GROUP=NOTEBOOK_PROCESSOR_HTML_EN_COMPLETED
+            - LANGUAGES=en
+            - NOTEBOOK_FORMATS=html
+            - OUTPUT_TYPES=completed
+        deploy:
+            mode: replicated
+            replicas: 2
+
+    nb-html-de-codealong:
+        <<: *notebook-processor-base
+        environment:
+            - NATS_URL=nats://nats:4222
+            - LOG_LEVEL=INFO
+            - INPUT_DIR=/input
+            - OUTPUT_DIR=/output
+            - STREAM_NAME=EVENTS
+            - CONSUMER_NAME=NOTEBOOK_PROCESSOR
+            - SUBJECT=event.file.*.notebooks.>
+            - NOTEBOOK_PREFIX=module
+            - NOTEBOOK_EXTENSION=.py
+            - PROG_LANG=python
+            - QUEUE_GROUP=NOTEBOOK_PROCESSOR_HTML_DE_CODEALONG
+            - LANGUAGES=de
+            - NOTEBOOK_FORMATS=html
+            - OUTPUT_TYPES=codealong
+        deploy:
+            mode: replicated
+            replicas: 2
+
+    nb-html-en-codealong:
+        <<: *notebook-processor-base
+        environment:
+            - NATS_URL=nats://nats:4222
+            - LOG_LEVEL=INFO
+            - INPUT_DIR=/input
+            - OUTPUT_DIR=/output
+            - STREAM_NAME=EVENTS
+            - CONSUMER_NAME=NOTEBOOK_PROCESSOR
+            - SUBJECT=event.file.*.notebooks.>
+            - NOTEBOOK_PREFIX=module
+            - NOTEBOOK_EXTENSION=.py
+            - PROG_LANG=python
+            - QUEUE_GROUP=NOTEBOOK_PROCESSOR_HTML_EN_CODEALONG
+            - LANGUAGES=en
+            - NOTEBOOK_FORMATS=html
+            - OUTPUT_TYPES=codealong
+        deploy:
+            mode: replicated
+            replicas: 2
+
+    nb-html-de-speaker:
+        <<: *notebook-processor-base
+        environment:
+            - NATS_URL=nats://nats:4222
+            - LOG_LEVEL=INFO
+            - INPUT_DIR=/input
+            - OUTPUT_DIR=/output
+            - STREAM_NAME=EVENTS
+            - CONSUMER_NAME=NOTEBOOK_PROCESSOR
+            - SUBJECT=event.file.*.notebooks.>
+            - NOTEBOOK_PREFIX=module
+            - NOTEBOOK_EXTENSION=.py
+            - PROG_LANG=python
+            - QUEUE_GROUP=NOTEBOOK_PROCESSOR_HTML_DE_SPEAKER
+            - LANGUAGES=de
+            - NOTEBOOK_FORMATS=html
+            - OUTPUT_TYPES=speaker
+        deploy:
+            mode: replicated
+            replicas: 2
+
+    nb-html-en-speaker:
+        <<: *notebook-processor-base
+        environment:
+            - NATS_URL=nats://nats:4222
+            - LOG_LEVEL=INFO
+            - INPUT_DIR=/input
+            - OUTPUT_DIR=/output
+            - STREAM_NAME=EVENTS
+            - CONSUMER_NAME=NOTEBOOK_PROCESSOR
+            - SUBJECT=event.file.*.notebooks.>
+            - NOTEBOOK_PREFIX=module
+            - NOTEBOOK_EXTENSION=.py
+            - PROG_LANG=python
+            - QUEUE_GROUP=NOTEBOOK_PROCESSOR_HTML_EN_SPEAKER
+            - LANGUAGES=en
+            - NOTEBOOK_FORMATS=html
+            - OUTPUT_TYPES=speaker
+        deploy:
+            mode: replicated
+            replicas: 2
 
 networks:
     app-network:

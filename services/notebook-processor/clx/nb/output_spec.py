@@ -22,9 +22,8 @@ from .utils.jupyter_utils import (
     get_tags,
     is_cell_included_for_language,
     is_code_cell,
-    is_markdown_cell,
 )
-from .utils.prog_lang_utils import config, jupytext_format_for, suffix_for
+from .utils.prog_lang_utils import jupytext_format_for, suffix_for
 
 
 @define
@@ -261,7 +260,7 @@ class SpeakerOutput(OutputSpec):
     """If we generate HTML for speakers we want to evaluate code cells."""
 
 
-def create_output_spec(spec_name: str, *args, **kwargs):
+def create_output_spec(output_type: str, *args, **kwargs):
     """Create a spec given a name and init data.
 
     >>> create_output_spec("completed", "de", "public", "De", "py")
@@ -279,7 +278,7 @@ def create_output_spec(spec_name: str, *args, **kwargs):
     ValueError: Unknown spec type: 'MySpecialSpec'.
     Valid spec types are 'completed', 'codealong' or 'speaker'.
     """
-    match spec_name.lower():
+    match output_type.lower():
         case "completed":
             spec_type = CompletedOutput
         case "codealong":
@@ -288,25 +287,28 @@ def create_output_spec(spec_name: str, *args, **kwargs):
             spec_type = SpeakerOutput
         case _:
             raise ValueError(
-                f"Unknown spec type: {spec_name!r}.\n"
+                f"Unknown spec type: {output_type!r}.\n"
                 "Valid spec types are 'completed', 'codealong' or 'speaker'."
             )
     return spec_type(*args, **kwargs)
 
 
-def create_output_specs(prog_lang="python"):
+def create_output_specs(
+    prog_lang="python",
+    languages=("de", "en"),
+    notebook_formats=("notebook", "code", "html"),
+    output_types=("completed", "codealong", "speaker"),
+):
     result = []
-    for lang in ["de", "en"]:
-        result.extend(
-            [
-                CompletedOutput(lang, prog_lang=prog_lang, notebook_format="notebook"),
-                CompletedOutput(lang, prog_lang=prog_lang, notebook_format="code"),
-                CodeAlongOutput(lang, prog_lang=prog_lang, notebook_format="notebook"),
-                CodeAlongOutput(lang, prog_lang=prog_lang, notebook_format="code"),
-                SpeakerOutput(lang, prog_lang=prog_lang, notebook_format="notebook"),
-                CompletedOutput(lang, prog_lang=prog_lang, notebook_format="html"),
-                CodeAlongOutput(lang, prog_lang=prog_lang, notebook_format="html"),
-                SpeakerOutput(lang, prog_lang=prog_lang, notebook_format="html"),
-            ]
-        )
+    for lang in languages:
+        for notebook_format in notebook_formats:
+            for output_type in output_types:
+                result.append(
+                    create_output_spec(
+                        output_type=output_type,
+                        lang=lang,
+                        notebook_format=notebook_format,
+                        prog_lang=prog_lang,
+                    )
+                )
     return result
