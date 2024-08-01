@@ -25,6 +25,7 @@ from nbformat.validator import normalize
 from .output_spec import OutputSpec, create_output_specs
 from .utils.jupyter_utils import (
     Cell,
+    find_notebook_titles,
     get_cell_type,
     get_slide_tag,
     get_tags,
@@ -202,18 +203,28 @@ class NotebookProcessor:
     def output_dir(self) -> Path:
         return Path(OUTPUT_DIR) / self.output_spec.path_fragment
 
-    async def process_notebook(self, absolute_path, relativ_path, notebook_text):
+    async def process_notebook(
+        self, absolute_path: str, relative_path: str, notebook_text: str
+    ):
         expanded_nb = await self.load_and_expand_jinja_template(notebook_text)
         suffix = self.output_spec.file_suffix
-        output_path = (self.output_dir / relativ_path).with_suffix(suffix)
+        output_path = self.get_output_path(relative_path, suffix, notebook_text)
         processed_nb = self.process_notebook_for_spec(expanded_nb)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         await self.write_to_target(
-            processed_nb, absolute_path, relativ_path, output_path
+            processed_nb, absolute_path, relative_path, output_path
         )
         logger.debug(
-            f"Processed notebook {relativ_path}. Output written to: {output_path}"
+            f"Processed notebook {relative_path}. Output written to: {output_path}"
         )
+
+    def get_output_path(self, relative_path: str, suffix: str, notebook_text: str):
+        relative_path = Path(relative_path)
+        titles = find_notebook_titles(notebook_text, relative_path.name)
+        title = titles[self.output_spec.lang]
+        renamed_path = relative_path.parent / title
+        logger.debug(f"Renamed path: {renamed_path}")
+        return (self.output_dir / renamed_path).with_suffix(suffix)
 
     async def load_and_expand_jinja_template(self, notebook_text: str) -> str:
         jinja_env = self._create_jinja_environment()
