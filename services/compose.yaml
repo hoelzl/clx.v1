@@ -123,7 +123,7 @@ services:
                     path: ./drawio-converter/requirements.txt
         deploy:
             mode: replicated
-            replicas: 2
+            replicas: 1
 
     plantuml-converter:
         build:
@@ -149,7 +149,7 @@ services:
                     path: ./plantuml-converter/requirements.txt
         deploy:
             mode: replicated
-            replicas: 6
+            replicas: 1
 
     staging-copier:
         build:
@@ -201,7 +201,7 @@ services:
             - OUTPUT_TYPES=completed,codealong,speaker
         deploy:
             mode: replicated
-            replicas: 4
+            replicas: 1
 
     nb-code:
         <<: *notebook-processor-base
@@ -221,7 +221,7 @@ services:
             - OUTPUT_TYPES=completed,codealong
         deploy:
             mode: replicated
-            replicas: 4
+            replicas: 1
 
     nb-html-de-completed:
         <<: *notebook-processor-base
@@ -241,7 +241,7 @@ services:
             - OUTPUT_TYPES=completed
         deploy:
             mode: replicated
-            replicas: 2
+            replicas: 1
             resources:
                 reservations:
                     devices:
@@ -267,7 +267,7 @@ services:
             - OUTPUT_TYPES=completed
         deploy:
             mode: replicated
-            replicas: 2
+            replicas: 1
             resources:
                 reservations:
                     devices:
@@ -293,7 +293,7 @@ services:
             - OUTPUT_TYPES=codealong
         deploy:
             mode: replicated
-            replicas: 2
+            replicas: 1
             resources:
                 reservations:
                     devices:
@@ -319,7 +319,7 @@ services:
             - OUTPUT_TYPES=codealong
         deploy:
             mode: replicated
-            replicas: 2
+            replicas: 1
             resources:
                 reservations:
                     devices:
@@ -345,7 +345,7 @@ services:
             - OUTPUT_TYPES=speaker
         deploy:
             mode: replicated
-            replicas: 2
+            replicas: 1
             resources:
                 reservations:
                     devices:
@@ -371,7 +371,7 @@ services:
             - OUTPUT_TYPES=speaker
         deploy:
             mode: replicated
-            replicas: 2
+            replicas: 1
             resources:
                 reservations:
                     devices:

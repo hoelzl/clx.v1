@@ -132,9 +132,14 @@ class CellIdGenerator:
 
 
 async def process_file(
-    absolute_path: str, relative_path: str, action: str, old_path=None
+    absolute_path_str: str,
+    relative_path_str: str,
+    _action: str,
+    old_path_str: str | None = None,
 ):
-    absolute_path = Path(absolute_path)
+    absolute_path = Path(absolute_path_str)
+    relative_path = Path(relative_path_str)
+    _old_path = Path(old_path_str) if old_path_str else None
     if not absolute_path.exists():
         logger.error(f"Input file does not exist: {absolute_path}")
         return
@@ -156,8 +161,10 @@ async def process_file(
             output_types=OUTPUT_TYPES,
         ):
             processor = NotebookProcessor(output_spec)
-            file_to_remove = old_file_path(output_spec, processor, old_path)
-            remove_old_file_if_moved(file_to_remove, action)
+            # Don't need to move output when input has been renamed.
+            # TODO: Implement tracking the titles of the notebooks.
+            # file_to_remove = old_file_path(output_spec, processor, old_path)
+            # remove_old_file_if_moved(file_to_remove, action)
             await processor.process_notebook(
                 absolute_path, relative_path, notebook_text
             )
@@ -168,12 +175,9 @@ async def process_file(
 def old_file_path(output_spec, processor, old_relative_path):
     if not old_relative_path:
         return None
-    logger.debug(f"Old relative path: {old_relative_path}")
-    logger.debug(f"Path fragment: {output_spec.path_fragment}")
     old_file = (processor.output_dir / old_relative_path).with_suffix(
         output_spec.file_suffix
     )
-    logger.debug(f"Old file path: {old_file}")
     return old_file
 
 
@@ -204,7 +208,7 @@ class NotebookProcessor:
         return Path(OUTPUT_DIR) / self.output_spec.path_fragment
 
     async def process_notebook(
-        self, absolute_path: str, relative_path: str, notebook_text: str
+        self, absolute_path: Path, relative_path: Path, notebook_text: str
     ):
         expanded_nb = await self.load_and_expand_jinja_template(notebook_text)
         suffix = self.output_spec.file_suffix
@@ -218,10 +222,12 @@ class NotebookProcessor:
             f"Processed notebook {relative_path}. Output written to: {output_path}"
         )
 
-    def get_output_path(self, relative_path: str, suffix: str, notebook_text: str):
-        relative_path = Path(relative_path)
+    def get_output_path(self, relative_path: Path, suffix: str, notebook_text: str):
         titles = find_notebook_titles(notebook_text, relative_path.name)
-        title = titles[self.output_spec.lang]
+        # Add a number to the title, since we use that to recognize notebooks
+        # when copying them from staging to output.
+        # TODO: If the notebook has a name slides_xy_foo.py then use xy as the number.
+        title = f"01 {titles[self.output_spec.lang]}"
         renamed_path = relative_path.parent / title
         logger.debug(f"Renamed path: {renamed_path}")
         return (self.output_dir / renamed_path).with_suffix(suffix)
@@ -323,8 +329,8 @@ class NotebookProcessor:
     async def write_to_target(
         self,
         processed_nb: NotebookNode,
-        absolute_path: str,
-        relative_path: str,
+        absolute_path: Path,
+        relative_path: Path,
         output_path: Path,
     ):
         try:
@@ -341,7 +347,11 @@ class NotebookProcessor:
             logging.error(err)
 
     async def _write_using_nbconvert(
-        self, processed_nb, absolute_path, relative_path, output_path
+        self,
+        processed_nb,
+        absolute_path: Path,
+        relative_path: Path,
+        output_path: Path,
     ):
         body = await self._create_html_contents(
             processed_nb, absolute_path, relative_path, output_path
@@ -351,13 +361,18 @@ class NotebookProcessor:
             html_file.write(body)
 
     async def _create_html_contents(
-        self, processed_nb, absolute_path, relative_path, output_path
+        self,
+        processed_nb,
+        absolute_path: Path,
+        relative_path: Path,
+        output_path: Path,
     ):
         traitlets.log.get_logger().addFilter(DontWarnForMissingAltTags())
         if self.output_spec.evaluate_for_html:
             if any(is_code_cell(cell) for cell in processed_nb.get("cells", [])):
                 logger.debug(
-                    f"Evaluating and writing notebook {relative_path!r} to {output_path}."
+                    f"Evaluating and writing notebook {relative_path} to "
+                    f"{output_path}."
                 )
                 try:
                     # To silence warnings about frozen modules...
@@ -373,7 +388,9 @@ class NotebookProcessor:
                             None,
                             lambda: ep.preprocess(
                                 processed_nb,
-                                resources={"metadata": {"path": absolute_path.parent}},
+                                resources={
+                                    "metadata": {"path": Path(absolute_path).parent}
+                                },
                             ),
                         )
                 except Exception:
