@@ -52,6 +52,8 @@ def path_fragment(lang, notebook_format, target):
 
 
 def output_dir(lang, notebook_format, output_type) -> Path:
+    if output_type == "codealong":
+        output_type = "code_along"
     return Path(OUTPUT_DIR) / path_fragment(lang, notebook_format, output_type)
 
 

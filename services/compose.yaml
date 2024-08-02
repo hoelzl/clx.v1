@@ -170,7 +170,7 @@ services:
             - QUEUE_GROUP=STAGING_COPIER_CODE
             - LANGUAGES=de,en
             - NOTEBOOK_FORMATS=notebook,code,html
-            - OUTPUT_TYPES=completed,codealong
+            - OUTPUT_TYPES=completed,codealong,speaker
         volumes:
             - C:\Users\tc\Programming\Python\Courses\Own\PythonCoursesNew\slides:/slides:ro
             - C:\Users\tc\Programming\Python\Courses\Own\PythonCoursesNew\staging:/staging:rw

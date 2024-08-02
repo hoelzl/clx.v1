@@ -7,7 +7,6 @@ import signal
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict
 
 import aiofiles
 import nats
@@ -58,7 +57,7 @@ class FileWatcher:
         logger.info(f"FileWatcher initialized with config from {config_path}")
 
     @staticmethod
-    def load_config(config_path: Path) -> Dict[str, WatchedDirectory]:
+    def load_config(config_path: Path) -> dict[str, WatchedDirectory]:
         with open(config_path, "r") as f:
             config = yaml.safe_load(f)
         logger.debug(f"Loaded configuration from {config_path}")
