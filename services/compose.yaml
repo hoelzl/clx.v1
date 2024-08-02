@@ -74,7 +74,7 @@ services:
                 condition: service_completed_successfully
         environment:
             - NATS_URL=nats://nats:4222
-            - LOG_LEVEL=DEBUG
+            - LOG_LEVEL=INFO
             - CONFIG_PATH=/app/config.yaml
             - DB_PATH=/clx-db/watched_files.db
         volumes:
@@ -159,7 +159,7 @@ services:
                 condition: service_completed_successfully
         environment:
             - NATS_URL=nats://nats:4222
-            - LOG_LEVEL=DEBUG
+            - LOG_LEVEL=INFO
             - INPUT_DIR=/input
             - OUTPUT_DIR=/staging
             - STREAM_NAME=EVENTS
@@ -188,7 +188,7 @@ services:
         <<: *notebook-processor-base
         environment:
             - NATS_URL=nats://nats:4222
-            - LOG_LEVEL=DEBUG
+            - LOG_LEVEL=INFO
             - INPUT_DIR=/input
             - OUTPUT_DIR=/staging
             - STREAM_NAME=EVENTS

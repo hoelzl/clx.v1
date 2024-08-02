@@ -112,23 +112,39 @@ class FileWatcher:
                 await asyncio.sleep(2**i)
         raise OSError("Could not connect to NATS")
 
-    async def scan_directories(self):
+    async def scan_directories(self, send_unchanged=False, force_changed=False):
         logger.info("Starting directory scan")
         for watched_dir in self.config.values():
             logger.debug(f"Scanning directory: {watched_dir.path}")
             for pattern in watched_dir.patterns:
                 for file_path in watched_dir.path.glob(pattern):
                     await self.process_file_or_directory(
-                        file_path, watched_dir.tag, initial_scan=True
+                        file_path,
+                        watched_dir.tag,
+                        send_unchanged=send_unchanged,
+                        force_changed=force_changed,
                     )
         logger.info("Directory scan completed")
+
+    async def scan_directory(
+        self, dir_path: Path, pattern: str, tag="notebooks", force_changed=True
+    ):
+        logger.info(f"Scanning directory: {dir_path}")
+        for file_path in dir_path.glob(pattern):
+            await self.process_file_or_directory(
+                file_path,
+                tag,
+                force_changed=force_changed,
+                send_unchanged=True,
+            )
+        logger.info(f"Directory scan completed: {dir_path}")
 
     def file_matches_pattern(self, file_path: Path, tag: str) -> bool:
         watched_dir = self.config[tag]
         return any(file_path.match(pattern) for pattern in watched_dir.patterns)
 
     async def process_file_or_directory(
-        self, file_path: Path, tag: str, initial_scan=False
+        self, file_path: Path, tag: str, send_unchanged=False, force_changed=False
     ):
         if not self.file_matches_pattern(file_path, tag):
             logger.debug(
@@ -138,18 +154,18 @@ class FileWatcher:
 
         logger.debug(f"{tag}: Processing file or directory {file_path}")
         if file_path.is_dir():
-            await self.process_directory(file_path, initial_scan, tag)
+            await self.process_directory(file_path, tag, send_unchanged)
         else:
-            await self.process_file(file_path, initial_scan, tag)
+            await self.process_file(file_path, tag, send_unchanged, force_changed)
 
-    async def process_directory(self, dir_path: Path, initial_scan, tag):
+    async def process_directory(self, dir_path: Path, tag, initial_scan):
         if not self.is_directory_in_db(dir_path):
             self.add_directory_to_db(dir_path, tag)
             await self.send_event("directory.created", dir_path, tag, "")
         elif initial_scan:
             await self.send_event("file.unchanged", dir_path, tag, "")
 
-    async def process_file(self, file_path, initial_scan, tag):
+    async def process_file(self, file_path, tag, initial_scan, force_changed=False):
         file_hash = await self.compute_hash(file_path)
         existing_hash = self.get_hash_from_db(file_path, tag)
         if existing_hash is None:
@@ -159,6 +175,9 @@ class FileWatcher:
         elif existing_hash != file_hash:
             logger.debug(f"{tag}: File modified: {file_path}")
             self.update_hash_in_db(file_path, file_hash, tag)
+            await self.send_event("file.modified", file_path, tag, file_hash)
+        elif force_changed:
+            logger.debug(f"{tag}: File force-changed: {file_path}")
             await self.send_event("file.modified", file_path, tag, file_hash)
         elif initial_scan:
             logger.debug(f"{tag}: File unchanged: {file_path}")
@@ -342,7 +361,6 @@ class FileWatcher:
             observer.schedule(event_handler, str(watched_dir.path), recursive=True)
             logger.info(f"Watching for {watched_dir.tag} in {watched_dir.path}")
         observer.start()
-
         try:
             while not self.shutdown_event.is_set():
                 try:
@@ -354,6 +372,23 @@ class FileWatcher:
                     if command == "reset":
                         await self.reset()
                     elif command == "rescan":
+                        try:
+                            try:
+                                data = json.loads(command_msg.data.decode())
+                            except json.JSONDecodeError:
+                                data = {"path": command_msg.data.decode()}
+                            path = data.get("path")
+                            if not path:
+                                logger.error("No path provided for rescan command")
+                                continue
+                            pattern = data.get("pattern", "**/*")
+                            force_changed = data.get("force_changed", True)
+                            await self.scan_directory(
+                                Path(path), pattern, force_changed=force_changed
+                            )
+                        except Exception as e:
+                            logger.error(f"Error processing rescan command: {e}")
+                    elif command == "rescan-all":
                         await self.scan_directories()
                     elif command == "shutdown":
                         await self.shutdown()
