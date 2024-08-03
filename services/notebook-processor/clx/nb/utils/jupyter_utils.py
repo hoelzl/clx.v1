@@ -168,6 +168,8 @@ _STRING_TRANSLATION_TABLE = str.maketrans(
 TITLE_REGEX = re.compile(
     r"{{\s*header\s*\(\s*[\"'](.*)[\"']\s*,\s*[\"'](.*)[\"']\s*\)\s*}}"
 )
+TITLE_LINE1_REGEX = re.compile(r"{{\s*header\s*\(\s*[\"'](.*)[\"'],\s*\n")
+TITLE_LINE2_REGEX = re.compile(r"[#/*]*\s*[\"'](.*)[\"']\)\s*}}\s*")
 
 
 def find_notebook_titles(text: str, default: str) -> dict[str, str]:
@@ -179,7 +181,16 @@ def find_notebook_titles(text: str, default: str) -> dict[str, str]:
             "de": sanitize_file_name(match[1]),
         }
     else:
-        return {"en": default, "de": default}
+        match1 = TITLE_LINE1_REGEX.search(text)
+        if match1:
+            start_pos = match1.end()
+            match2 = TITLE_LINE2_REGEX.match(text, start_pos)
+            if match2:
+                return {
+                    "en": sanitize_file_name(match2[1]),
+                    "de": sanitize_file_name(match1[1]),
+                }
+    return {"en": default, "de": default}
 
 
 def sanitize_file_name(text: str):
