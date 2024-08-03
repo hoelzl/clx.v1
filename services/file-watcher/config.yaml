@@ -20,3 +20,7 @@ watched_directories:
         path: /slides
         patterns:
             - "**/*"
+    output:
+        path: /staging
+        patterns:
+            - "**/module_*/topic_*/[0-9][0-9] *.*"

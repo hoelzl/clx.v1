@@ -13,7 +13,9 @@ import nats
 import nats.errors
 import yaml
 from watchdog.events import FileSystemEventHandler
-from watchdog.observers.polling import PollingObserver as Observer
+
+# from watchdog.observers.polling import PollingObserver as Observer
+from watchdog.observers import Observer
 
 CONFIG_PATH = os.environ.get("CONFIG_PATH", "config.yaml")
 NATS_URL = os.environ.get("NATS_URL", "nats://nats:4222")

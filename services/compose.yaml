@@ -7,8 +7,26 @@ x-notebook-processor-base: &notebook-processor-base
         nats-init:
             condition: service_completed_successfully
     volumes:
-        - C:\Users\tc\Programming\Python\Courses\Own\PythonCoursesNew\slides:/slides:ro
-        - C:\Users\tc\Programming\Python\Courses\Own\PythonCoursesNew\staging:/staging:rw
+        - type: volume
+          bind:
+              create_host_path: true
+          source: clx-data
+          target: /slides
+          read_only: true
+          volume:
+              nocopy: true
+              subpath: courses/python/slides
+        - type: volume
+          bind:
+              create_host_path: true
+          source: clx-data
+          target: /staging
+          read_only: false
+          volume:
+              nocopy: true
+              subpath: courses/python/staging
+#        - C:\Users\tc\Programming\Python\Courses\Own\PythonCoursesNew\slides:/slides:ro
+#        - C:\Users\tc\Programming\Python\Courses\Own\PythonCoursesNew\staging:/staging:rw
     networks:
         - app-network
     develop:
@@ -21,6 +39,46 @@ x-notebook-processor-base: &notebook-processor-base
 
 
 services:
+    vscode:
+        build: ./vscode-server
+        container_name: vscode
+        user: 1000:1000
+        ports:
+            - "8080:8080"
+        volumes:
+            - clx-data:/home/coder:rw
+        environment:
+            PASSWORD: vscode
+
+    jupyter:
+        image: jupyter/base-notebook:latest
+        container_name: jupyter
+        user: 1000:1000
+        ports:
+            - "8888:8888"
+        volumes:
+            - clx-data:/home/jovyan:rw
+        environment:
+            JUPYTER_ENABLE_LAB: "yes"
+        command: "start-notebook.sh --NotebookApp.token='' --NotebookApp.password='' --ip=0.0.0.0"
+
+    html-server:
+        image: pierrezemb/gostatic:latest
+        container_name: html-server
+        user : 1000:1000
+        ports:
+            - "8000:8043"  # Expose gostatic's default port 8043 on host port 8000
+        volumes:
+            - type: volume
+              source: clx-data
+              target: /srv/http
+              read_only: false
+              volume:
+                  nocopy: true
+        command: "gostatic -l -s /srv/http -d /srv/http -p 8043"
+
+
+
     nats:
         image: nats:latest
         ports:
@@ -78,8 +136,22 @@ services:
             - CONFIG_PATH=/app/config.yaml
             - DB_PATH=/clx-db/watched_files.db
         volumes:
-            - C:\Users\tc\Programming\Python\Courses\Own\PythonCoursesNew\slides:/slides:ro
-            - C:\Users\tc\Programming\Python\Courses\Own\PythonCoursesNew\staging:/input/staging:ro
+            - type: volume
+              source: clx-data
+              target: /slides
+              read_only: true
+              volume:
+                  nocopy: true
+                  subpath: courses/python/slides
+            - type: volume
+              source: clx-data
+              target: /staging
+              read_only: true
+              volume:
+                  nocopy: true
+                  subpath: courses/python/staging
+#            - C:\Users\tc\Programming\Python\Courses\Own\PythonCoursesNew\slides:/slides:ro
+#            - C:\Users\tc\Programming\Python\Courses\Own\PythonCoursesNew\staging:/staging:ro
             - ./file-watcher/config.yaml:/app/config.yaml
             - clx-db:/clx-db
         networks:
@@ -104,7 +176,14 @@ services:
             - CONFIG_PATH=/app/config.yaml
             - DISPLAY=:99
         volumes:
-            - C:\Users\tc\Programming\Python\Courses\Own\PythonCoursesNew\slides:/slides:rw
+            - type: volume
+              source: clx-data
+              target: /slides
+              read_only: false
+              volume:
+                  nocopy: true
+                  subpath: courses/python/slides
+#            - C:\Users\tc\Programming\Python\Courses\Own\PythonCoursesNew\slides:/slides:rw
             - ./drawio-converter/config.yaml:/app/config.yaml:ro
         networks:
             - app-network
@@ -136,7 +215,14 @@ services:
             - LOG_LEVEL=INFO
             - CONFIG_PATH=/app/config.yaml
         volumes:
-            - C:\Users\tc\Programming\Python\Courses\Own\PythonCoursesNew\slides:/slides:rw
+            - type: volume
+              source: clx-data
+              target: /slides
+              read_only: false
+              volume:
+                  nocopy: true
+                  subpath: courses/python/slides
+#            - C:\Users\tc\Programming\Python\Courses\Own\PythonCoursesNew\slides:/slides:rw
             - ./plantuml-converter/config.yaml:/app/config.yaml:ro
         networks:
             - app-network
@@ -163,17 +249,30 @@ services:
             - INPUT_DIR=/input
             - OUTPUT_DIR=/staging
             - STREAM_NAME=EVENTS
-            - CONSUMER_NAME=STAGING_COPIER
             - SUBJECT=event.file.*.staging
             - NOTEBOOK_EXTENSION=.py
             - PROG_LANG=python
-            - QUEUE_GROUP=STAGING_COPIER_CODE
+            - QUEUE_GROUP=STAGING_COPIER_QUEUE
             - LANGUAGES=de,en
             - NOTEBOOK_FORMATS=notebook,code,html
             - OUTPUT_TYPES=completed,codealong,speaker
         volumes:
-            - C:\Users\tc\Programming\Python\Courses\Own\PythonCoursesNew\slides:/slides:ro
-            - C:\Users\tc\Programming\Python\Courses\Own\PythonCoursesNew\staging:/staging:rw
+            - type: volume
+              source: clx-data
+              target: /slides
+              read_only: true
+              volume:
+                  nocopy: true
+                  subpath: courses/python/slides
+            - type: volume
+              source: clx-data
+              target: /staging
+              read_only: false
+              volume:
+                  nocopy: true
+                  subpath: courses/python/staging
+#            - C:\Users\tc\Programming\Python\Courses\Own\PythonCoursesNew\slides:/slides:ro
+#            - C:\Users\tc\Programming\Python\Courses\Own\PythonCoursesNew\staging:/staging:rw
         networks:
             - app-network
         develop:
@@ -183,6 +282,60 @@ services:
                     target: /app
                 -   action: rebuild
                     path: ./staging-copier/requirements.txt
+
+    output-copier:
+        build:
+            context: ./output-copier
+        depends_on:
+            nats-init:
+                condition: service_completed_successfully
+        environment:
+            - SPEC_DIR=/course-specs
+            - STAGING_DIR=/staging
+            - OUTPUT_DIR=/output
+            - REGEN_COOLDOWN=5
+            - NATS_URL=nats://nats:4222
+            - LOG_LEVEL=DEBUG
+            - STREAM_NAME=EVENTS
+            - FILE_SUBJECT=event.file.*.output
+            - COMMAND_SUBJECT=command.output.>
+            - FILE_QUEUE_GROUP=OUTPUT_COPIER_FILE_QUEUE
+            - COMMAND_QUEUE_GROUP=OUTPUT_COPIER_COMMAND_QUEUE
+            - LANGUAGES=de,en
+        volumes:
+            - type: volume
+              source: clx-data
+              target: /course-specs
+              read_only: true
+              volume:
+                  nocopy: true
+                  subpath: courses/python/course-specs
+            - type: volume
+              source: clx-data
+              target: /staging
+              read_only: true
+              volume:
+                  nocopy: true
+                  subpath: courses/python/staging
+            - type: volume
+              source: clx-data
+              target: /output
+              read_only: false
+              volume:
+                  nocopy: true
+                  subpath: courses/python/output
+#            - C:\Users\tc\Programming\Python\Courses\Own\PythonCoursesNew\course-specs:/course-specs:ro
+#            - C:\Users\tc\Programming\Python\Courses\Own\PythonCoursesNew\staging:/staging:ro
+#            - C:\Users\tc\Programming\Python\Courses\Own\PythonCoursesNew\output-test:/output:rw
+        networks:
+            - app-network
+        develop:
+            watch:
+                -   action: sync+restart
+                    path: ./output-copier
+                    target: /app
+                -   action: rebuild
+                    path: ./output-copier/requirements.txt
 
     nb-notebook:
         <<: *notebook-processor-base
@@ -211,11 +364,10 @@ services:
             - INPUT_DIR=/input
             - OUTPUT_DIR=/staging
             - STREAM_NAME=EVENTS
-            - CONSUMER_NAME=NOTEBOOK_PROCESSOR
             - SUBJECT=event.file.*.notebooks
             - NOTEBOOK_EXTENSION=.py
             - PROG_LANG=python
-            - QUEUE_GROUP=NOTEBOOK_PROCESSOR_CODE
+            - QUEUE_GROUP=NOTEBOOK_PROCESSOR_BASE
             - LANGUAGES=de,en
             - NOTEBOOK_FORMATS=code
             - OUTPUT_TYPES=completed,codealong
@@ -231,7 +383,6 @@ services:
             - INPUT_DIR=/input
             - OUTPUT_DIR=/staging
             - STREAM_NAME=EVENTS
-            - CONSUMER_NAME=NOTEBOOK_PROCESSOR
             - SUBJECT=event.file.*.notebooks
             - NOTEBOOK_EXTENSION=.py
             - PROG_LANG=python
@@ -257,7 +408,6 @@ services:
             - INPUT_DIR=/input
             - OUTPUT_DIR=/staging
             - STREAM_NAME=EVENTS
-            - CONSUMER_NAME=NOTEBOOK_PROCESSOR
             - SUBJECT=event.file.*.notebooks
             - NOTEBOOK_EXTENSION=.py
             - PROG_LANG=python
@@ -283,7 +433,6 @@ services:
             - INPUT_DIR=/input
             - OUTPUT_DIR=/staging
             - STREAM_NAME=EVENTS
-            - CONSUMER_NAME=NOTEBOOK_PROCESSOR
             - SUBJECT=event.file.*.notebooks
             - NOTEBOOK_EXTENSION=.py
             - PROG_LANG=python
@@ -309,7 +458,6 @@ services:
             - INPUT_DIR=/input
             - OUTPUT_DIR=/staging
             - STREAM_NAME=EVENTS
-            - CONSUMER_NAME=NOTEBOOK_PROCESSOR
             - SUBJECT=event.file.*.notebooks
             - NOTEBOOK_EXTENSION=.py
             - PROG_LANG=python
@@ -335,7 +483,6 @@ services:
             - INPUT_DIR=/input
             - OUTPUT_DIR=/staging
             - STREAM_NAME=EVENTS
-            - CONSUMER_NAME=NOTEBOOK_PROCESSOR
             - SUBJECT=event.file.*.notebooks
             - NOTEBOOK_EXTENSION=.py
             - PROG_LANG=python
@@ -361,7 +508,6 @@ services:
             - INPUT_DIR=/input
             - OUTPUT_DIR=/staging
             - STREAM_NAME=EVENTS
-            - CONSUMER_NAME=NOTEBOOK_PROCESSOR
             - SUBJECT=event.file.*.notebooks
             - NOTEBOOK_EXTENSION=.py
             - PROG_LANG=python
@@ -381,6 +527,7 @@ services:
 
 volumes:
     clx-db:
+    clx-data:
 
 networks:
     app-network:

@@ -69,6 +69,7 @@ def parse_course(xml_file: Path) -> Course:
     )
 
 
+# noinspection PyTypeChecker
 def build_slide_mapping(
     staging_dir: Path,
 ) -> dict[str, dict[tuple[str, str, str], Path]]:
@@ -76,13 +77,13 @@ def build_slide_mapping(
     for lang_dir in filter(Path.is_dir, staging_dir.iterdir()):
         lang = lang_dir.name
         for format_dir in filter(Path.is_dir, lang_dir.iterdir()):
-            format = format_dir.name
+            output_format = format_dir.name
             for mode_dir in filter(Path.is_dir, format_dir.iterdir()):
                 mode = mode_dir.name
                 for module_dir in filter(Path.is_dir, mode_dir.iterdir()):
                     for topic_dir in filter(Path.is_dir, module_dir.iterdir()):
                         slide_name = "_".join(topic_dir.name.split("_")[2:])
-                        selector = (lang, format, mode)
+                        selector = (lang, output_format, mode)
                         slide_mapping.setdefault(slide_name, {})[selector] = topic_dir
     return slide_mapping
 
@@ -153,7 +154,8 @@ def copy_public_files(course, output_dir, slide_mapping):
                     for slide_name in section.slides:
                         if slide_name not in slide_mapping:
                             print(
-                                f"Warning: Slide {slide_name} not found in staging directory."
+                                f"Warning: Slide {slide_name} not found in "
+                                "staging directory."
                             )
                             continue
 
@@ -184,7 +186,8 @@ def copy_speaker_files(course, output_dir, slide_mapping):
                 for slide_name in section.slides:
                     if slide_name not in slide_mapping:
                         print(
-                            f"Warning: Slide {slide_name} not found in staging directory."
+                            f"Warning: Slide {slide_name} not found in "
+                            "staging directory."
                         )
                         continue
 
