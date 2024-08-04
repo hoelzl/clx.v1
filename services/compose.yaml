@@ -4,8 +4,8 @@ x-notebook-processor-base: &notebook-processor-base
     build:
         context: ./notebook-processor
     depends_on:
-        nats-init:
-            condition: service_completed_successfully
+        nats:
+            condition: service_started
     volumes:
         - type: volume
           bind:
@@ -91,45 +91,45 @@ services:
         networks:
             - app-network
 
-    nats-init:
-        build: ./nats-init
-        depends_on:
-            nats:
-                condition: service_started
-        environment:
-            - NATS_URL=nats://nats:4222
-        networks:
-            - app-network
-        develop:
-            watch:
-                -   action: sync+restart
-                    path: ./nats-init
-                    target: /app
-                -   action: rebuild
-                    path: ./nats-init/requirements.txt
+#    nats-init:
+#        build: ./nats-init
+#        depends_on:
+#            nats:
+#                condition: service_started
+#        environment:
+#            - NATS_URL=nats://nats:4222
+#        networks:
+#            - app-network
+#        develop:
+#            watch:
+#                -   action: sync+restart
+#                    path: ./nats-init
+#                    target: /app
+#                -   action: rebuild
+#                    path: ./nats-init/requirements.txt
 
-    nats-log:
-        build: ./nats-log
-        environment:
-            - NATS_URL=nats://nats:4222
-        networks:
-            - app-network
-        profiles:
-            - debug
-        develop:
-            watch:
-                -   action: sync+restart
-                    path: ./nats-log
-                    target: /app
-                -   action: rebuild
-                    path: ./nats-log/requirements.txt
+#    nats-log:
+#        build: ./nats-log
+#        environment:
+#            - NATS_URL=nats://nats:4222
+#        networks:
+#            - app-network
+#        profiles:
+#            - debug
+#        develop:
+#            watch:
+#                -   action: sync+restart
+#                    path: ./nats-log
+#                    target: /app
+#                -   action: rebuild
+#                    path: ./nats-log/requirements.txt
 
     file-watcher:
         build:
             context: file-watcher
         depends_on:
-            nats-init:
-                condition: service_completed_successfully
+            nats:
+                condition: service_started
         environment:
             - NATS_URL=nats://nats:4222
             - LOG_LEVEL=INFO
@@ -168,8 +168,8 @@ services:
         build:
             context: ./drawio-converter
         depends_on:
-            nats-init:
-                condition: service_completed_successfully
+            nats:
+                condition: service_started
         environment:
             - NATS_URL=nats://nats:4222
             - LOG_LEVEL=INFO
@@ -208,8 +208,8 @@ services:
         build:
             context: ./plantuml-converter
         depends_on:
-            nats-init:
-                condition: service_completed_successfully
+            nats:
+                condition: service_started
         environment:
             - NATS_URL=nats://nats:4222
             - LOG_LEVEL=INFO
@@ -241,8 +241,8 @@ services:
         build:
             context: ./staging-copier
         depends_on:
-            nats-init:
-                condition: service_completed_successfully
+            nats:
+                condition: service_started
         environment:
             - NATS_URL=nats://nats:4222
             - LOG_LEVEL=INFO
@@ -287,17 +287,18 @@ services:
         build:
             context: ./output-copier
         depends_on:
-            nats-init:
-                condition: service_completed_successfully
+            nats:
+                condition: service_started
         environment:
             - SPEC_DIR=/course-specs
             - STAGING_DIR=/staging
             - OUTPUT_DIR=/output
             - REGEN_COOLDOWN=5
             - NATS_URL=nats://nats:4222
-            - LOG_LEVEL=INFO
+            - LOG_LEVEL=DEBUG
             - EVENT_STREAM_NAME=EVENTS
             - COMMAND_STREAM_NAME=COMMANDS
+            - COMMAND_OUTPUT_STREAM_NAME=COMMANDS_OUTPUT
             - FILE_SUBJECT=event.file.*.output
             - COMMAND_SUBJECT=command.output.>
             - FILE_QUEUE_GROUP=OUTPUT_COPIER_FILE_QUEUE

@@ -30,8 +30,14 @@ async def create_streams():
         await create_stream(
             js,
             "COMMANDS",
-            "command",
-            retention=RetentionPolicy.WORK_QUEUE,
+            "command.watcher",
+            # retention=RetentionPolicy.WORK_QUEUE,
+        )
+        await create_stream(
+            js,
+            "COMMANDS_OUTPUT",
+            "command.output",
+            # retention=RetentionPolicy.WORK_QUEUE,
         )
     except Exception as e:
         logger.error(f"Error connecting to NATS: {e}")

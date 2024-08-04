@@ -16,7 +16,6 @@ from jinja2 import Environment, PackageLoader, StrictUndefined
 from jupytext import jupytext
 from nats.aio.msg import Msg
 from nats.errors import NoServersError
-from nats.js.client import JetStreamContext
 from nbconvert import HTMLExporter
 from nbconvert.preprocessors import ExecutePreprocessor
 from nbformat import NotebookNode
@@ -87,20 +86,6 @@ async def connect_client_with_retry(nats_url: str, num_retries: int = 5):
             logger.error(f"Error connecting to NATS: {e}")
             await asyncio.sleep(2**i)
     raise OSError("Could not connect to NATS")
-
-
-async def connect_jetstream(nats_url: str) -> tuple[nats.NATS, JetStreamContext]:
-    try:
-        nc = await connect_client_with_retry(nats_url)
-        js = nc.jetstream()
-        logger.info(f"Connected to JetStream at {nats_url}")
-        return nc, js
-    except NoServersError:
-        logger.fatal(f"Could not connect to NATS server at {nats_url}.")
-        raise
-    except Exception as e:
-        logger.fatal(f"Error connecting to NATS server: {str(e)}")
-        raise
 
 
 async def is_notebook_file(input_path: Path) -> bool:
@@ -446,7 +431,7 @@ async def process_message(msg: Msg):
         # await msg.nak()
 
 
-async def run_consumer(nc: nats.NATS, _js: JetStreamContext):
+async def run_consumer(nc: nats.NATS):
     sub = None
     try:
         logger.debug(f"Trying to subscribe to {SUBJECT!r}")
@@ -496,9 +481,8 @@ def restart_handler(_signum, _frame):
 
 
 async def main():
-    nc, js = await connect_jetstream(NATS_URL)
-
-    consumer_task = asyncio.create_task(run_consumer(nc, js))
+    nc = await connect_client_with_retry(NATS_URL)
+    consumer_task = asyncio.create_task(run_consumer(nc))
 
     await shutdown_flag.wait()
     await consumer_task

@@ -12,8 +12,6 @@ from pathlib import Path
 
 import nats
 from nats.aio.msg import Msg
-from nats.errors import NoServersError
-from nats.js.client import JetStreamContext
 
 ROOT_DIR = Path(
     os.getenv(
@@ -28,6 +26,9 @@ REGEN_COOLDOWN = int(os.getenv("REGEN_COOLDOWN", 10))
 NATS_URL = os.environ.get("NATS_URL", "nats://localhost:4222")
 EVENT_STREAM_NAME = os.environ.get("STREAM_NAME", "EVENTS")
 COMMAND_STREAM_NAME = os.environ.get("COMMAND_STREAM_NAME", "COMMANDS")
+COMMAND_OUTPUT_STREAM_NAME = os.environ.get(
+    "COMMAND_OUTPUT_STREAM_NAME", "COMMANDS_OUTPUT"
+)
 CONSUMER_NAME = os.environ.get("CONSUMER_NAME", "OUTPUT_GENERATOR")
 FILE_SUBJECT = os.environ.get("SUBJECT", "event.file.*.output")
 COMMAND_SUBJECT = os.environ.get("COMMAND_SUBJECT", "command.output.>")
@@ -62,9 +63,8 @@ shutdown_flag = asyncio.Event()
 # Courses and their last generation timestamps
 courses: dict[str, "Course"] = {}
 
-# Nats client and jetstream
+# Nats client
 nats_client: nats.NATS | None = None
-jetstream: JetStreamContext | None = None
 
 
 @dataclass
@@ -257,18 +257,19 @@ async def connect_client_with_retry(nats_url: str, num_retries: int = 5):
     raise OSError("Could not connect to NATS")
 
 
-async def connect_jetstream(nats_url: str) -> tuple[nats.NATS, JetStreamContext]:
-    try:
-        nc = await connect_client_with_retry(nats_url)
-        js = nc.jetstream()
-        logger.info(f"Connected to JetStream at {nats_url}")
-        return nc, js
-    except NoServersError:
-        logger.fatal(f"Could not connect to NATS server at {nats_url}.")
-        raise
-    except Exception as e:
-        logger.fatal(f"Error connecting to NATS server: {str(e)}")
-        raise
+#
+# async def connect_jetstream(nats_url: str) -> tuple[nats.NATS, JetStreamContext]:
+#     try:
+#         nc = await connect_client_with_retry(nats_url)
+#         js = nc.jetstream()
+#         logger.info(f"Connected to JetStream at {nats_url}")
+#         return nc, js
+#     except NoServersError:
+#         logger.fatal(f"Could not connect to NATS server at {nats_url}.")
+#         raise
+#     except Exception as e:
+#         logger.fatal(f"Error connecting to NATS server: {str(e)}")
+#         raise
 
 
 async def process_file_event(msg: Msg):
@@ -293,7 +294,7 @@ async def process_file_event(msg: Msg):
 
 
 async def process_command(msg: Msg):
-    logger.debug(f"Received command: {msg.subject}")
+    logger.info(f"Received command: {msg.subject}")
     try:
         command = msg.subject.split(".")[2]
         if command == "clear-timers":
@@ -398,8 +399,8 @@ async def create_course(course_name: str):
             await delete_course(course_name)
             for topic in course.topics:
                 await nats_client.publish(
-                    "command.watcher.rescan",
-                    json.dumps({"topic": f"{topic}"}).encode("utf-8"),
+                    subject="command.watcher.rescan",
+                    payload=json.dumps({"topic": f"{topic}"}).encode("utf-8"),
                 )
             logger.debug(f"Waiting {REGEN_DELAY} seconds before regenerating course")
             await asyncio.sleep(REGEN_DELAY)
@@ -457,8 +458,16 @@ async def regenerate_course(course_name: str, course: Course):
         logger.debug(f"Waiting {REGEN_DELAY} seconds before regenerating course")
         await asyncio.sleep(REGEN_DELAY)
         logger.debug(f"Regen delay over. Generating course {course_name}")
-        topic_mapping = build_topic_mapping(STAGING_DIR)
-        copy_and_rename_files(course, topic_mapping)
+        try:
+            topic_mapping = build_topic_mapping(STAGING_DIR)
+        except Exception as e:
+            logger.error(f"Error building topic mapping: {str(e)}")
+            return
+        try:
+            copy_and_rename_files(course, topic_mapping)
+        except Exception as e:
+            logger.error(f"Error copying files: {str(e)}")
+            return
         course.last_generation_time = time.time()
         logger.info(f"Course {course_name} regenerated successfully")
     except Exception as e:
@@ -477,27 +486,24 @@ async def copy_staged_files_for(course_name: str):
         logger.error(f"Error creating course {course_name}: {str(e)}")
 
 
-async def run_consumers(nc: nats.NATS, js: JetStreamContext):
+async def run_consumers(nc: nats.NATS):
     file_sub = await nc.subscribe(
         FILE_SUBJECT,
         queue=FILE_QUEUE_GROUP,
         cb=process_file_event,
     )
-    command_sub = await js.pull_subscribe(
+    command_sub = await nc.subscribe(
         COMMAND_SUBJECT,
-        stream=COMMAND_STREAM_NAME,
     )
     logger.info(f"Subscribed to {FILE_SUBJECT!r} and {COMMAND_SUBJECT!r}")
     try:
         while not shutdown_flag.is_set():
+            logger.debug("Loop started!")
             try:
-                command_msgs = await command_sub.fetch(1)
-                logger.debug(f"Received {len(command_msgs)} command message(s)")
-                for command_msg in command_msgs:
-                    await command_msg.ack()
-                    command = command_msg.subject.split(".")[2]
-                    logger.info(f"Received command: {command} {command_msg.data}")
-                    await process_command(command_msg)
+                command_msg = await command_sub.next_msg(timeout=1)
+                command = command_msg.subject.split(".")[2]
+                logger.info(f"Received command: {command} {command_msg.data}")
+                await process_command(command_msg)
             except asyncio.TimeoutError:
                 continue
             except asyncio.CancelledError:
@@ -516,8 +522,7 @@ async def run_consumers(nc: nats.NATS, js: JetStreamContext):
 
 async def main():
     global nats_client
-    global jetstream
-    nats_client, jetstream = await connect_jetstream(NATS_URL)
+    nats_client = await nats.connect(NATS_URL)
 
     # Load initial courses from spec files
     for spec_file in Path("/course-specs").glob("*.xml"):
@@ -530,7 +535,7 @@ async def main():
         except Exception as e:
             logger.error(f"Error loading course spec {spec_file}: {e}")
 
-    consumer_task = asyncio.create_task(run_consumers(nats_client, jetstream))
+    consumer_task = asyncio.create_task(run_consumers(nats_client))
 
     await shutdown_flag.wait()
     await consumer_task

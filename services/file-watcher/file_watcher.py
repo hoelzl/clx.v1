@@ -58,7 +58,6 @@ class FileWatcher:
         self.shutdown_event = asyncio.Event()
         self.nats_url = nats_url
         self.nats_client: nats.NATS | None = None
-        self.jetstream = None
         self.command_sub = None
         logger.info(f"FileWatcher initialized with config from {config_path}")
 
@@ -102,9 +101,7 @@ class FileWatcher:
 
     async def connect_nats(self):
         await self.connect_client_with_retry()
-        self.jetstream = self.nats_client.jetstream()
-        # self.command_sub = await self.nats_client.subscribe("command.watcher.>")
-        self.command_sub = await self.jetstream.pull_subscribe("command.watcher.>")
+        self.command_sub = await self.nats_client.subscribe("command.watcher.>")
         logger.debug("Subscribed to command.watcher.> subject")
 
     async def connect_client_with_retry(self, num_retries=5):
@@ -375,21 +372,18 @@ class FileWatcher:
         try:
             while not self.shutdown_event.is_set():
                 try:
-                    command_msgs = await self.command_sub.fetch(1)
-                    logger.debug(f"Received {len(command_msgs)} command message(s)")
-                    for command_msg in command_msgs:
-                        await command_msg.ack()
-                        command = command_msg.subject.split(".")[2]
-                        logger.info(f"Received command: {command} {command_msg.data}")
-                        if command == "reset":
-                            await self.reset()
-                        elif command == "rescan":
-                            await self.rescan_dir_or_topic(command_msg)
-                        elif command == "rescan-all":
-                            await self.scan_directories()
-                        elif command == "shutdown":
-                            await self.shutdown()
-                            break
+                    command_msg = await self.command_sub.next_msg(timeout=1)
+                    command = command_msg.subject.split(".")[2]
+                    logger.info(f"Received command: {command} {command_msg.data}")
+                    if command == "reset":
+                        await self.reset()
+                    elif command == "rescan":
+                        await self.rescan_dir_or_topic(command_msg)
+                    elif command == "rescan-all":
+                        await self.scan_directories()
+                    elif command == "shutdown":
+                        await self.shutdown()
+                        break
                 except asyncio.TimeoutError:
                     continue
                 except asyncio.CancelledError:
