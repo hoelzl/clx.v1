@@ -29,6 +29,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Configure a separate logger for watchdog and set its log level to a higher level
+watchdog_logger = logging.getLogger("watchdog")
+watchdog_logger.setLevel(logging.WARNING)
+
 
 @dataclass
 class WatchedDirectory:
@@ -99,7 +103,8 @@ class FileWatcher:
     async def connect_nats(self):
         await self.connect_client_with_retry()
         self.jetstream = self.nats_client.jetstream()
-        self.command_sub = await self.nats_client.subscribe("command.watcher.>")
+        # self.command_sub = await self.nats_client.subscribe("command.watcher.>")
+        self.command_sub = await self.jetstream.pull_subscribe("command.watcher.>")
         logger.debug("Subscribed to command.watcher.> subject")
 
     async def connect_client_with_retry(self, num_retries=5):
@@ -161,6 +166,7 @@ class FileWatcher:
             await self.process_file(file_path, tag, send_unchanged, force_changed)
 
     async def process_directory(self, dir_path: Path, tag, initial_scan):
+        logger.debug(f"{tag}: Processing directory: {dir_path}")
         if not self.is_directory_in_db(dir_path):
             self.add_directory_to_db(dir_path, tag)
             await self.send_event("directory.created", dir_path, tag, "")
@@ -168,6 +174,7 @@ class FileWatcher:
             await self.send_event("file.unchanged", dir_path, tag, "")
 
     async def process_file(self, file_path, tag, initial_scan, force_changed=False):
+        logger.debug(f"{tag}: Processing file: {file_path}")
         file_hash = await self.compute_hash(file_path)
         existing_hash = self.get_hash_from_db(file_path, tag)
         if existing_hash is None:
@@ -184,6 +191,8 @@ class FileWatcher:
         elif initial_scan:
             logger.debug(f"{tag}: File unchanged: {file_path}")
             await self.send_event("file.unchanged", file_path, tag, file_hash)
+        else:
+            logger.debug(f"{tag}: File unchanged: {file_path}")
 
     def is_directory_in_db(self, dir_path: Path) -> bool:
         with self.conn:
@@ -279,7 +288,7 @@ class FileWatcher:
         }
         event = f"event.{event_type}.{tag}"
         # logger.debug(f"{tag}: Sending {event} for file: {file_path}: {payload}")
-        await self.jetstream.publish(event, json.dumps(payload).encode())
+        await self.nats_client.publish(event, json.dumps(payload).encode())
         logger.debug(f"{tag}: Sent {event} for file: {file_path}")
 
     async def process_file_watcher_events(self):
@@ -366,40 +375,29 @@ class FileWatcher:
         try:
             while not self.shutdown_event.is_set():
                 try:
-                    command_msg = await asyncio.wait_for(
-                        self.command_sub.next_msg(), timeout=1
-                    )
-                    command = command_msg.subject.split(".")[2]
-                    logger.info(f"Received command: {command}")
-                    if command == "reset":
-                        await self.reset()
-                    elif command == "rescan":
-                        try:
-                            try:
-                                data = json.loads(command_msg.data.decode())
-                            except json.JSONDecodeError:
-                                data = {"path": command_msg.data.decode()}
-                            path = data.get("path")
-                            if not path:
-                                logger.error("No path provided for rescan command")
-                                continue
-                            pattern = data.get("pattern", "**/*")
-                            force_changed = data.get("force_changed", True)
-                            await self.scan_directory(
-                                Path(path), pattern, force_changed=force_changed
-                            )
-                        except Exception as e:
-                            logger.error(f"Error processing rescan command: {e}")
-                    elif command == "rescan-all":
-                        await self.scan_directories()
-                    elif command == "shutdown":
-                        await self.shutdown()
-                        break
+                    command_msgs = await self.command_sub.fetch(1)
+                    logger.debug(f"Received {len(command_msgs)} command message(s)")
+                    for command_msg in command_msgs:
+                        await command_msg.ack()
+                        command = command_msg.subject.split(".")[2]
+                        logger.info(f"Received command: {command} {command_msg.data}")
+                        if command == "reset":
+                            await self.reset()
+                        elif command == "rescan":
+                            await self.rescan_dir_or_topic(command_msg)
+                        elif command == "rescan-all":
+                            await self.scan_directories()
+                        elif command == "shutdown":
+                            await self.shutdown()
+                            break
                 except asyncio.TimeoutError:
                     continue
                 except asyncio.CancelledError:
                     logger.info("Watch directories task cancelled")
                     break
+                except Exception as e:
+                    logger.error(f"Error processing command: {e}")
+                    raise
         finally:
             observer.stop()
             observer.join()
@@ -413,6 +411,43 @@ class FileWatcher:
         self.create_tables_if_necessary()
         await self.scan_directories()
         logger.info("Reset completed")
+
+    async def rescan_dir_or_topic(self, command_msg):
+        try:
+            try:
+                data = json.loads(command_msg.data.decode())
+                await self.maybe_set_path_from_topic(data)
+            except json.JSONDecodeError:
+                data = {"path": command_msg.data.decode()}
+            path = data.get("path")
+            tag = data.get("tag", "notebooks")
+            if not path:
+                logger.error("No path provided for rescan command")
+                return
+            pattern = data.get("pattern", "**/*")
+            force_changed = data.get("force_changed", True)
+            await self.scan_directory(
+                Path(path), pattern, force_changed=force_changed, tag=tag
+            )
+        except Exception as e:
+            logger.error(f"Error processing rescan command: {e}")
+
+    @staticmethod
+    async def maybe_set_path_from_topic(data):
+        topic = data.get("topic")
+        if topic and not data.get("path"):
+            topic_paths = [
+                p
+                for p in Path("/slides").glob("**/topic_*")
+                if simplify_topic_name(p.stem) == topic
+            ]
+            if not topic_paths:
+                raise ValueError(f"No paths found for topic {topic}")
+            if len(topic_paths) > 1:
+                raise ValueError(
+                    f"Multiple paths found for topic {topic}: {topic_paths}"
+                )
+            data["path"] = topic_paths[0]
 
     async def run(self):
         logger.info("Starting FileWatcher")
@@ -500,6 +535,10 @@ class FileEventHandler(FileSystemEventHandler):
                 f"{self.tag}: Skipping move event: {event.src_path} -> "
                 f"{event.dest_path}"
             )
+
+
+def simplify_topic_name(topic_name):
+    return "_".join(topic_name.split("_")[2:])
 
 
 def main():

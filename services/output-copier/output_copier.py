@@ -26,7 +26,8 @@ OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", ROOT_DIR / "output-test"))
 REGEN_DELAY = int(os.getenv("REGEN_DELAY", 5))
 REGEN_COOLDOWN = int(os.getenv("REGEN_COOLDOWN", 10))
 NATS_URL = os.environ.get("NATS_URL", "nats://localhost:4222")
-STREAM_NAME = os.environ.get("STREAM_NAME", "EVENTS")
+EVENT_STREAM_NAME = os.environ.get("STREAM_NAME", "EVENTS")
+COMMAND_STREAM_NAME = os.environ.get("COMMAND_STREAM_NAME", "COMMANDS")
 CONSUMER_NAME = os.environ.get("CONSUMER_NAME", "OUTPUT_GENERATOR")
 FILE_SUBJECT = os.environ.get("SUBJECT", "event.file.*.output")
 COMMAND_SUBJECT = os.environ.get("COMMAND_SUBJECT", "command.output.>")
@@ -38,12 +39,12 @@ LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
 
 SLIDES_REGEX = re.compile(r"^(\d+) ")
 NAME_MAPPINGS = {
-    "code": "python",
-    "html": "html",
-    "notebook": "notebooks",
-    "code_along": "code-along",
-    "completed": "completed",
-    "speaker": "speaker",
+    "code": "Python",
+    "html": "Html",
+    "notebook": "Notebooks",
+    "code_along": "Code-Along",
+    "completed": "Completed",
+    "speaker": "Speaker",
 }
 SLIDE_NAME_MAPPINGS = {"de": "folien", "en": "slides"}
 
@@ -61,6 +62,10 @@ shutdown_flag = asyncio.Event()
 # Courses and their last generation timestamps
 courses: dict[str, "Course"] = {}
 
+# Nats client and jetstream
+nats_client: nats.NATS | None = None
+jetstream: JetStreamContext | None = None
+
 
 @dataclass
 class Course:
@@ -73,11 +78,24 @@ class Course:
     last_generation_time: float | None = None
     github_repo: dict[str, str] = field(default_factory=dict)
 
+    @property
+    def topics(self) -> list[str]:
+        return [topic for section in self.sections for topic in section.topics]
+
+    def output_dir(self, lang, public_or_speaker) -> Path:
+        return (
+            OUTPUT_DIR
+            / lang
+            / public_or_speaker
+            / self.name[lang]
+            / SLIDE_NAME_MAPPINGS[lang]
+        )
+
 
 @dataclass
 class Section:
     name: dict[str, str]
-    slides: list[str]
+    topics: list[str]
 
 
 def parse_multilang(root, tag) -> dict[str, str]:
@@ -88,8 +106,8 @@ def parse_sections(root) -> list[Section]:
     sections = []
     for i, section_elem in enumerate(root.findall("sections/section"), start=1):
         name = parse_multilang(root, f"sections/section[{i}]/name")
-        slides = [slide.text for slide in section_elem.find("slides").findall("slide")]
-        sections.append(Section(name=name, slides=slides))
+        topics = [slide.text for slide in section_elem.find("topics").findall("topic")]
+        sections.append(Section(name=name, topics=topics))
     return sections
 
 
@@ -121,16 +139,14 @@ def build_topic_mapping(
                 mode = mode_dir.name
                 for module_dir in filter(Path.is_dir, mode_dir.iterdir()):
                     for topic_dir in filter(Path.is_dir, module_dir.iterdir()):
-                        logger.debug(f"Found topic directory: {topic_dir}")
-                        topic_name = simplify_topic_name(topic_dir)
-                        logger.debug(f"Found topic: {topic_name}")
+                        topic_name = simplify_topic_name(topic_dir.name)
                         selector = (lang, output_format, mode)
                         topic_mapping.setdefault(topic_name, {})[selector] = topic_dir
     return topic_mapping
 
 
-def simplify_topic_name(topic_dir):
-    return "_".join(topic_dir.name.split("_")[2:])
+def simplify_topic_name(topic_dir: str) -> str:
+    return "_".join(topic_dir.split("_")[2:])
 
 
 def is_slide_file(file: Path) -> bool:
@@ -154,32 +170,28 @@ def copy_files(
         elif source_file.is_file():
             if is_slide_file(source_file):
                 new_slide_name = replace_slide_number(source_file, slide_counter)
-                logger.warning(
+                logger.debug(
                     f"{course.name['en']}: Copying slide {source_file} to "
                     f"{target_dir} as {new_slide_name}"
                 )
                 shutil.copy(source_file, target_dir / new_slide_name)
                 slide_counter += 1
             else:
-                logger.warning(f"Copying file {source_file} to {target_dir}")
+                logger.debug(f"Copying file {source_file} to {target_dir}")
                 shutil.copy(source_file, target_dir)
     return slide_counter
 
 
 def copy_and_rename_files(
-    course: Course,
-    topic_mapping: dict[str, dict[tuple[str, str, str], Path]],
-    output_dir: Path,
+    course: Course, topic_mapping: dict[str, dict[tuple[str, str, str], Path]]
 ):
-    copy_public_files(course, output_dir, topic_mapping)
-    copy_speaker_files(course, output_dir, topic_mapping)
+    copy_public_files(course, topic_mapping)
+    copy_speaker_files(course, topic_mapping)
 
 
-def copy_public_files(course, output_dir, topic_mapping):
+def copy_public_files(course, topic_mapping):
     for lang in ["de", "en"]:
-        lang_output_dir = (
-            output_dir / lang / "public" / course.name[lang] / SLIDE_NAME_MAPPINGS[lang]
-        )
+        lang_output_dir = course.output_dir(lang, "public")
 
         for format_ in ["html", "notebook", "code"]:
             format_output_dir = lang_output_dir / NAME_MAPPINGS[format_]
@@ -191,7 +203,7 @@ def copy_public_files(course, output_dir, topic_mapping):
                     section_dir = lang_mode_output_dir / section.name[lang]
                     slide_counter = 1
 
-                    for topic_name in section.slides:
+                    for topic_name in section.topics:
                         if topic_name not in topic_mapping:
                             logger.warning(
                                 f"{course.name[lang]}: Warning: Topic {topic_name} "
@@ -206,15 +218,9 @@ def copy_public_files(course, output_dir, topic_mapping):
                         )
 
 
-def copy_speaker_files(course, output_dir, topic_mapping):
+def copy_speaker_files(course, topic_mapping):
     for lang in ["de", "en"]:
-        speaker_output_dir = (
-            output_dir
-            / lang
-            / "speaker"
-            / course.name[lang]
-            / SLIDE_NAME_MAPPINGS[lang]
-        )
+        speaker_output_dir = course.output_dir(lang, "speaker")
         logger.debug(f"{course.name[lang]}: Speaker output dir: {speaker_output_dir}")
         for format_ in ["html", "notebook"]:
             format_output_dir = speaker_output_dir / NAME_MAPPINGS[format_]
@@ -223,15 +229,15 @@ def copy_speaker_files(course, output_dir, topic_mapping):
                 section_dir = format_output_dir / section.name[lang]
                 slide_counter = 1
 
-                for slide_name in section.slides:
-                    if slide_name not in topic_mapping:
+                for topic_name in section.topics:
+                    if topic_name not in topic_mapping:
                         logger.warning(
-                            f"Warning: Slide {slide_name} not found "
+                            f"Warning: Topic {topic_name} not found "
                             f"in staging directory."
                         )
                         continue
 
-                    topic_dirs = topic_mapping[slide_name]
+                    topic_dirs = topic_mapping[topic_name]
                     topic_dir = topic_dirs[(lang, format_, "speaker")]
                     slide_counter = copy_files(
                         course, topic_dir, section_dir, slide_counter
@@ -272,13 +278,14 @@ async def process_file_event(msg: Msg):
         logger.debug(f"Message data: {data}")
         absolute_path = data.get("absolute_path")
         relative_path = data.get("relative_path")
+        topic = simplify_topic_name(data.get("containing_dir", "topic_999_"))
         if absolute_path and relative_path:
             logger.debug(f"Processing message for file: {absolute_path}")
             action = get_event_action(msg)
             if action in ["created", "modified"]:
-                await process_file_change(relative_path)
+                await process_file_change(relative_path, topic)
             elif action == "deleted":
-                await process_file_deletion(relative_path)
+                await process_file_deletion(relative_path, topic)
             else:
                 logger.debug(f"Skipping event action: {action}")
     except Exception as e:
@@ -293,9 +300,20 @@ async def process_command(msg: Msg):
             logger.info("Clearing generation timers for all courses")
             for course in courses.values():
                 course.last_generation_time = None
+        elif command == "copy-staged-files":
+            course_name = get_name_from_message(msg)
+            if course_name:
+                await copy_staged_files_for(course_name)
+            else:
+                logger.error("Invalid command payload: missing 'name' field")
+        elif command == "delete":
+            course_name = get_name_from_message(msg)
+            if course_name:
+                await delete_course(course_name)
+            else:
+                logger.error("Invalid command payload: missing 'name' field")
         elif command == "create-course":
-            data = json.loads(msg.data.decode())
-            course_name = data.get("name")
+            course_name = get_name_from_message(msg)
             if course_name:
                 await create_course(course_name)
             else:
@@ -306,36 +324,125 @@ async def process_command(msg: Msg):
         logger.error(f"Error processing command: {str(e)}")
 
 
-async def process_file_change(relative_path: str):
+def get_name_from_message(msg: Msg) -> str:
+    try:
+        data = json.loads(msg.data.decode())
+        return data.get("name")
+    except json.JSONDecodeError:
+        return msg.data.decode()
+
+
+async def delete_course(course_name: str):
+    logger.info(f"Deleting course: {course_name}")
+    try:
+        course = courses.get(course_name)
+        if course:
+            for lang in ["de", "en"]:
+                public_course_dir = course.output_dir(lang, "public")
+                private_course_dir = course.output_dir(lang, "speaker")
+
+                delete_course_dir(public_course_dir)
+                delete_course_dir(private_course_dir)
+        else:
+            logger.warning(f"Course {course_name} not found in loaded courses")
+    except Exception as e:
+        logger.error(f"Error deleting course {course_name}: {str(e)}")
+
+
+def delete_course_dir(course_dir: Path):
+    preserve_git_dir(course_dir)
+    try:
+        logger.debug(f"Deleting directory: {course_dir}")
+        shutil.rmtree(course_dir, ignore_errors=True)
+        course_dir.mkdir(exist_ok=True)
+    finally:
+        restore_git_dir(course_dir)
+
+
+def preserve_git_dir(course_dir: Path):
+    """
+    Move the .git directory out of the course directory temporarily,
+    to be restored after deleting the course contents.
+    """
+    git_dir = course_dir / ".git"
+    if git_dir.exists():
+        target = saved_git_dir(course_dir)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        logger.debug(f"Moving git directory to {git_dir} to " f"{target}")
+        shutil.move(str(git_dir.resolve()), str(target.resolve()))
+
+
+def restore_git_dir(course_dir: Path):
+    saved_dir = saved_git_dir(course_dir)
+    if saved_dir.exists():
+        logger.debug(f"Restoring saved git directory {saved_dir} to {course_dir}")
+        target_dir = (course_dir / ".git").resolve()
+        if target_dir.exists():
+            logger.warning(
+                f"Git directory already exists: {target_dir}. " "Not restoring."
+            )
+        logger.debug(f"Moving git directory from {saved_dir} to {course_dir}")
+        shutil.move(str(saved_dir.resolve()), str(target_dir))
+
+
+def saved_git_dir(course_dir) -> Path:
+    return Path("/tmp/saved-git") / course_dir.name
+
+
+async def create_course(course_name: str):
+    logger.info(f"Force creating course: {course_name}")
+    course = courses.get(course_name)
+    if course:
+        try:
+            logger.debug("Found course. Deleting and regenerating...")
+            await delete_course(course_name)
+            for topic in course.topics:
+                await nats_client.publish(
+                    "command.watcher.rescan",
+                    json.dumps({"topic": f"{topic}"}).encode("utf-8"),
+                )
+            logger.debug(f"Waiting {REGEN_DELAY} seconds before regenerating course")
+            await asyncio.sleep(REGEN_DELAY)
+            await copy_staged_files_for(course_name)
+        except Exception as e:
+            logger.error(f"Error force creating course {course_name}: {str(e)}")
+    else:
+        logger.error(f"Course {course_name} not found in loaded courses")
+        logger.error(f"Available courses: {list(courses.keys())}")
+
+
+async def process_file_change(relative_path: str, topic: str):
     logger.debug(f"Processing file change: {relative_path}")
     logger.debug(f"Available courses: {list(courses.keys())}")
     for course_name, course in courses.items():
         logger.debug(f"Checking {course_name} for regeneration (file changed)")
-        if should_regenerate_course(course, relative_path):
+        if should_regenerate_course(course, relative_path, topic):
             logger.debug(f"Regenerating course {course_name}")
             await regenerate_course(course_name, course)
 
 
-async def process_file_deletion(relative_path: str):
+async def process_file_deletion(relative_path: str, topic: str):
     logger.debug(f"Processing file deletion: {relative_path}")
     for course_name, course in courses.items():
         logger.debug(f"Checking {course_name} for regeneration (file deleted)")
-        if should_regenerate_course(course, relative_path):
+        if should_regenerate_course(course, relative_path, topic):
             logger.debug(f"Regenerating course {course_name}")
             await regenerate_course(course_name, course)
 
 
-def should_regenerate_course(course, _relative_path) -> bool:
+def should_regenerate_course(course, _relative_path: str, topic: str) -> bool:
+    if topic not in course.topics:
+        logger.debug(f"Skipping course {course.name['en']}: topic not found")
+        return False
     if course.is_generation_in_progress:
         logger.debug(
-            f"Skipping regeneration of course {course.name['en']}: "
-            f"generation already in progress"
+            f"Skipping course {course.name['en']}: generation already in progress"
         )
         return False
     last_generation_time = course.last_generation_time or 0
     if time.time() - last_generation_time < REGEN_COOLDOWN:
         logger.debug(
-            f"Skipping regeneration of course {course.name['en']}: "
+            f"Skipping course {course.name['en']}: "
             f"last generation was less than {REGEN_COOLDOWN} seconds ago"
         )
         return False
@@ -351,7 +458,7 @@ async def regenerate_course(course_name: str, course: Course):
         await asyncio.sleep(REGEN_DELAY)
         logger.debug(f"Regen delay over. Generating course {course_name}")
         topic_mapping = build_topic_mapping(STAGING_DIR)
-        copy_and_rename_files(course, topic_mapping, OUTPUT_DIR)
+        copy_and_rename_files(course, topic_mapping)
         course.last_generation_time = time.time()
         logger.info(f"Course {course_name} regenerated successfully")
     except Exception as e:
@@ -360,7 +467,7 @@ async def regenerate_course(course_name: str, course: Course):
         course.is_generation_in_progress = False
 
 
-async def create_course(course_name: str):
+async def copy_staged_files_for(course_name: str):
     logger.info(f"Creating new course: {course_name}")
     try:
         course = parse_course(Path(f"course-specs/{course_name}.xml"))
@@ -370,33 +477,47 @@ async def create_course(course_name: str):
         logger.error(f"Error creating course {course_name}: {str(e)}")
 
 
-async def run_consumers(js: JetStreamContext):
-    file_sub = await js.subscribe(
+async def run_consumers(nc: nats.NATS, js: JetStreamContext):
+    file_sub = await nc.subscribe(
         FILE_SUBJECT,
-        stream=STREAM_NAME,
         queue=FILE_QUEUE_GROUP,
         cb=process_file_event,
     )
-    command_sub = await js.subscribe(
+    command_sub = await js.pull_subscribe(
         COMMAND_SUBJECT,
-        stream=STREAM_NAME,
-        queue=COMMAND_QUEUE_GROUP,
-        cb=process_command,
+        stream=COMMAND_STREAM_NAME,
     )
-    logger.info(
-        f"Subscribed to {FILE_SUBJECT!r} and {COMMAND_SUBJECT!r} on stream {STREAM_NAME!r}"
-    )
-    while not shutdown_flag.is_set():
-        await asyncio.sleep(1)
-    logger.info("Shutting down consumers")
-    if file_sub:
-        await file_sub.drain()
-    if command_sub:
-        await command_sub.drain()
+    logger.info(f"Subscribed to {FILE_SUBJECT!r} and {COMMAND_SUBJECT!r}")
+    try:
+        while not shutdown_flag.is_set():
+            try:
+                command_msgs = await command_sub.fetch(1)
+                logger.debug(f"Received {len(command_msgs)} command message(s)")
+                for command_msg in command_msgs:
+                    await command_msg.ack()
+                    command = command_msg.subject.split(".")[2]
+                    logger.info(f"Received command: {command} {command_msg.data}")
+                    await process_command(command_msg)
+            except asyncio.TimeoutError:
+                continue
+            except asyncio.CancelledError:
+                logger.info("Output copier task cancelled")
+                break
+            except Exception as e:
+                logger.error(f"Error processing command: {e}")
+                raise
+    finally:
+        logger.info("Shutting down consumers")
+        if file_sub:
+            await file_sub.drain()
+        # if command_sub:
+        #     await command_sub.drain()
 
 
 async def main():
-    nc, js = await connect_jetstream(NATS_URL)
+    global nats_client
+    global jetstream
+    nats_client, jetstream = await connect_jetstream(NATS_URL)
 
     # Load initial courses from spec files
     for spec_file in Path("/course-specs").glob("*.xml"):
@@ -409,11 +530,11 @@ async def main():
         except Exception as e:
             logger.error(f"Error loading course spec {spec_file}: {e}")
 
-    consumer_task = asyncio.create_task(run_consumers(js))
+    consumer_task = asyncio.create_task(run_consumers(nats_client, jetstream))
 
     await shutdown_flag.wait()
     await consumer_task
-    await nc.close()
+    await nats_client.close()
 
 
 def get_event_action(msg):

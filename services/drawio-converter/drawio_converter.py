@@ -6,8 +6,6 @@ from pathlib import Path
 
 import nats
 import yaml
-from nats.js import JetStreamContext
-from nats.js.api import DeliverPolicy
 
 # Configuration
 QUEUE_GROUP = os.environ.get("QUEUE_GROUP", "DRAWIO_CONVERTER")
@@ -28,7 +26,6 @@ class DrawioConverter:
         self.drawio_tags = {}
         self.output_formats = []
         self.nats_client: nats.NATS | None = None
-        self.jetstream: JetStreamContext | None = None
         self.load_config()
 
     def load_config(self):
@@ -45,7 +42,6 @@ class DrawioConverter:
     async def connect_nats(self):
         try:
             self.nats_client = await nats.connect(self.nats_url)
-            self.jetstream = self.nats_client.jetstream()
             logger.info(f"Connected to NATS at {self.nats_url}")
         except Exception as e:
             logger.error(f"Error connecting to NATS: {e}")
@@ -56,12 +52,10 @@ class DrawioConverter:
             subject = f"event.file.*.{tag}"
             queue = f"{QUEUE_GROUP}_{tag}"
             logger.debug(f"Subscribing to subject: {subject} on queue group {queue}")
-            await self.jetstream.subscribe(
+            await self.nats_client.subscribe(
                 subject,
                 cb=self.handle_event,
-                deliver_policy=DeliverPolicy.ALL,
                 queue=queue,
-                stream="EVENTS",
             )
             logger.info(f"Subscribed to subject: {subject} on queue group {queue}")
 

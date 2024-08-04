@@ -26,7 +26,7 @@ async def create_streams():
     try:
         logger.info(f"Connected to NATS at {nats_url}")
         js = nc.jetstream()
-        await create_stream(js, "EVENTS", "event")
+        # await create_stream(js, "EVENTS", "event")
         await create_stream(
             js,
             "COMMANDS",

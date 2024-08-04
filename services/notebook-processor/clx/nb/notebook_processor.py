@@ -446,13 +446,13 @@ async def process_message(msg: Msg):
         # await msg.nak()
 
 
-async def run_consumer(js: JetStreamContext):
+async def run_consumer(nc: nats.NATS, _js: JetStreamContext):
     sub = None
     try:
         logger.debug(f"Trying to subscribe to {SUBJECT!r}")
-        sub = await js.subscribe(
+        sub = await nc.subscribe(
             SUBJECT,
-            stream=STREAM_NAME,
+            # stream=STREAM_NAME,
             queue=QUEUE_GROUP,
             # pending_msgs_limit=1,
         )
@@ -461,7 +461,6 @@ async def run_consumer(js: JetStreamContext):
             try:
                 msg = await sub.next_msg(timeout=1)
                 # logger.debug(f"Received message: {msg}")
-                await msg.ack()
                 if get_event_action(msg) in ["created", "modified", "moved"]:
                     await process_message(msg)
                 else:
@@ -499,7 +498,7 @@ def restart_handler(_signum, _frame):
 async def main():
     nc, js = await connect_jetstream(NATS_URL)
 
-    consumer_task = asyncio.create_task(run_consumer(js))
+    consumer_task = asyncio.create_task(run_consumer(nc, js))
 
     await shutdown_flag.wait()
     await consumer_task

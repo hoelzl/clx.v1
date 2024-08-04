@@ -4,13 +4,13 @@
         <en>https://github.com/hoelzl/my-course-en</en>
     </github>
     <name>
-        <de></de>
-        <en></en>
+        <de>Kurs X</de>
+        <en>Course X</en>
     </name>
     <prog-lang>python</prog-lang>
     <description>
-        <de>Clean Code in Python</de>
-        <en>Clean Code in Python</en>
+        <de>Ein Kurs</de>
+        <en>A Course</en>
     </description>
     <certificate>
         <de>...</de>
@@ -19,64 +19,12 @@
     <sections>
         <section>
             <name>
-                <de>intro</de>
-                <en>intro</en>
+                <de>Woche 1</de>
+                <en>Week 1</en>
             </name>
-            <slides>
-                <slide>course_files</slide>
-                <slide>working_with_notebooks</slide>
-                <slide>working_with_vscode</slide>
-                <slide>working_with_pycharm</slide>
-                <slide>tips_for_blended_learning</slide>
-                <slide>anaconda</slide>
-                <slide>shell_windows</slide>
-                <slide>shell_linux</slide>
-            </slides>
-        </section>
-        <section>
-            <name>
-                <de>woche-1</de>
-                <en>week-1</en>
-            </name>
-            <slides>
-                <slide>testing_intro</slide>
-                <slide>test_classification</slide>
-                <slide>unit_testing_intro</slide>
-                <slide>pytest</slide>
-                <slide>doctests</slide>
-                <slide>test_isolation</slide>
-                <slide>test_doubles</slide>
-                <slide>intro_clean_code</slide>
-                <slide>names_part_1</slide>
-                <slide>functions_part_1</slide>
-            </slides>
-        </section>
-        <section>
-            <name>
-                <de>woche-2</de>
-                <en>week-2</en>
-            </name>
-            <slides>
-                <slide></slide>
-            </slides>
-        </section>
-        <section>
-            <name>
-                <de>woche-3</de>
-                <en>week-3</en>
-            </name>
-            <slides>
-                <slide></slide>
-            </slides>
-        </section>
-        <section>
-            <name>
-                <de>woche-3</de>
-                <en>week-3</en>
-            </name>
-            <slides>
-                <slide></slide>
-            </slides>
+            <topics>
+                <topic>some_topic</topic>
+            </topics>
         </section>
     </sections>
 </course>

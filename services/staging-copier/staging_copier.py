@@ -10,7 +10,6 @@ from pathlib import Path
 import nats
 from nats.aio.msg import Msg
 from nats.errors import NoServersError
-from nats.js.client import JetStreamContext
 
 
 def string_to_list(string: str) -> list[str]:
@@ -77,20 +76,6 @@ async def connect_client_with_retry(nats_url: str, num_retries: int = 5):
     raise OSError("Could not connect to NATS")
 
 
-async def connect_jetstream(nats_url: str) -> tuple[nats.NATS, JetStreamContext]:
-    try:
-        nc = await connect_client_with_retry(nats_url)
-        js = nc.jetstream()
-        logger.info(f"Connected to JetStream at {nats_url}")
-        return nc, js
-    except NoServersError:
-        logger.fatal(f"Could not connect to NATS server at {nats_url}.")
-        raise
-    except Exception as e:
-        logger.fatal(f"Error connecting to NATS server: {str(e)}")
-        raise
-
-
 async def copy_file(
     input_path: str,
     relative_path: str,
@@ -140,7 +125,6 @@ async def process_message(msg: Msg):
                 logger.debug(f"Skipping event action: {action}")
     except Exception as e:
         logger.error(f"Error processing message: {str(e)}")
-        # await msg.nak()
 
 
 async def copy_file_to_staging_dirs(absolute_path, relative_path):
@@ -194,13 +178,12 @@ async def move_file_in_staging_dirs(old_relative_path, relative_path):
         logger.error(f"No old path found when moving {relative_path}")
 
 
-async def run_consumer(js: JetStreamContext):
+async def run_consumer(nc: nats.NATS):
     sub = None
     try:
         logger.debug(f"Trying to subscribe to {SUBJECT!r}")
-        sub = await js.subscribe(
+        sub = await nc.subscribe(
             SUBJECT,
-            stream=STREAM_NAME,
             queue=QUEUE_GROUP,
         )
         logger.info(f"Subscribed to {SUBJECT!r} on stream {STREAM_NAME!r}")
@@ -208,7 +191,6 @@ async def run_consumer(js: JetStreamContext):
             try:
                 msg = await sub.next_msg(timeout=1)
                 logger.debug(f"Received message: {msg}")
-                await msg.ack()
                 await process_message(msg)
             except nats.errors.TimeoutError:
                 # logger.debug("No messages available")
@@ -244,9 +226,10 @@ def restart_handler(_signum, _frame):
 
 
 async def main():
-    nc, js = await connect_jetstream(NATS_URL)
+    # nc, js = await connect_jetstream(NATS_URL)
+    nc = await connect_client_with_retry(NATS_URL)
 
-    consumer_task = asyncio.create_task(run_consumer(js))
+    consumer_task = asyncio.create_task(run_consumer(nc))
 
     await shutdown_flag.wait()
     await consumer_task
