@@ -392,7 +392,9 @@ def saved_git_dir(course_dir) -> Path:
 
 async def create_course(course_name: str):
     logger.info(f"Force creating course: {course_name}")
-    course = courses.get(course_name)
+    # Reparse the course file to deal with any changes
+    course = parse_course(spec_file_for(course_name))
+    courses[course_name] = course
     if course:
         try:
             logger.debug("Found course. Deleting and regenerating...")
@@ -479,11 +481,18 @@ async def regenerate_course(course_name: str, course: Course):
 async def copy_staged_files_for(course_name: str):
     logger.info(f"Creating new course: {course_name}")
     try:
-        course = parse_course(Path(f"/course-specs/{course_name}.xml"))
+        course = parse_course(spec_file_for(course_name))
         courses[course_name] = course
         await regenerate_course(course_name, course)
     except Exception as e:
         logger.error(f"Error creating course {course_name}: {str(e)}")
+
+
+def spec_file_for(course_name):
+    result = Path(f"/course-specs/{course_name}.xml")
+    if not result.exists():
+        raise FileNotFoundError(f"Course spec file not found: {result}")
+    return result
 
 
 async def run_consumers(nc: nats.NATS):
@@ -498,7 +507,7 @@ async def run_consumers(nc: nats.NATS):
     logger.info(f"Subscribed to {FILE_SUBJECT!r} and {COMMAND_SUBJECT!r}")
     try:
         while not shutdown_flag.is_set():
-            logger.debug("Loop started!")
+            # logger.debug("Loop started!")
             try:
                 command_msg = await command_sub.next_msg(timeout=1)
                 command = command_msg.subject.split(".")[2]

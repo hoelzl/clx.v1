@@ -117,31 +117,38 @@ class FileWatcher:
         raise OSError("Could not connect to NATS")
 
     async def scan_directories(self, send_unchanged=False, force_changed=False):
-        logger.info("Starting directory scan")
+        logger.info("Scanning directories...")
         for watched_dir in self.config.values():
             logger.debug(f"Scanning directory: {watched_dir.path}")
             for pattern in watched_dir.patterns:
-                for file_path in watched_dir.path.glob(pattern):
-                    await self.process_file_or_directory(
-                        file_path,
-                        watched_dir.tag,
-                        send_unchanged=send_unchanged,
-                        force_changed=force_changed,
-                    )
-        logger.info("Directory scan completed")
+                await self.scan_directory(
+                    dir_path=watched_dir.path,
+                    pattern=pattern,
+                    tag=watched_dir.tag,
+                    send_unchanged=send_unchanged,
+                    force_changed=force_changed,
+                )
 
     async def scan_directory(
-        self, dir_path: Path, pattern: str, tag="notebooks", force_changed=True
+        self,
+        dir_path: Path,
+        pattern: str,
+        tag="notebooks",
+        send_unchanged=False,
+        force_changed=False,
     ):
-        logger.info(f"Scanning directory: {dir_path}")
+        logger.debug(f"{tag}: Scanning directory: {dir_path} with pattern {pattern}")
+        if not dir_path.exists():
+            raise ValueError(f"Directory does not exist: {dir_path}")
         for file_path in dir_path.glob(pattern):
+            logger.debug(f"{tag}: Processing file or directory: {file_path}")
             await self.process_file_or_directory(
                 file_path,
                 tag,
                 force_changed=force_changed,
-                send_unchanged=True,
+                send_unchanged=send_unchanged,
             )
-        logger.info(f"Directory scan completed: {dir_path}")
+        logger.debug(f"Directory scan completed: {dir_path}")
 
     def file_matches_pattern(self, file_path: Path, tag: str) -> bool:
         watched_dir = self.config[tag]
@@ -414,7 +421,7 @@ class FileWatcher:
             except json.JSONDecodeError:
                 data = {"path": command_msg.data.decode()}
             path = data.get("path")
-            tag = data.get("tag", "notebooks")
+            tag = data.get("tag", "staging")
             if not path:
                 logger.error("No path provided for rescan command")
                 return

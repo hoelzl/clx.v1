@@ -8,6 +8,7 @@
       <sourceFolder url="file://$MODULE_DIR$/services/nats-log" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/services/notebook-processor" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/services/plantuml-converter" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/services/output-copier" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/db" />
     </content>
     <orderEntry type="jdk" jdkName="clx" jdkType="Python SDK" />
