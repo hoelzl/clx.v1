@@ -132,7 +132,7 @@ services:
                 condition: service_completed_successfully
         environment:
             - NATS_URL=nats://nats:4222
-            - LOG_LEVEL=DEBUG
+            - LOG_LEVEL=INFO
             - CONFIG_PATH=/app/config.yaml
             - DB_PATH=/clx-db/watched_files.db
         volumes:
@@ -295,7 +295,7 @@ services:
             - OUTPUT_DIR=/output
             - REGEN_COOLDOWN=5
             - NATS_URL=nats://nats:4222
-            - LOG_LEVEL=DEBUG
+            - LOG_LEVEL=INFO
             - EVENT_STREAM_NAME=EVENTS
             - COMMAND_STREAM_NAME=COMMANDS
             - FILE_SUBJECT=event.file.*.output

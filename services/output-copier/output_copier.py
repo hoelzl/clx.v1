@@ -470,7 +470,7 @@ async def regenerate_course(course_name: str, course: Course):
 async def copy_staged_files_for(course_name: str):
     logger.info(f"Creating new course: {course_name}")
     try:
-        course = parse_course(Path(f"course-specs/{course_name}.xml"))
+        course = parse_course(Path(f"/course-specs/{course_name}.xml"))
         courses[course_name] = course
         await regenerate_course(course_name, course)
     except Exception as e:
