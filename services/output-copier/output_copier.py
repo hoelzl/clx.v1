@@ -47,7 +47,7 @@ NAME_MAPPINGS = {
     "completed": "Completed",
     "speaker": "Speaker",
 }
-SLIDE_NAME_MAPPINGS = {"de": "folien", "en": "slides"}
+SLIDE_NAME_MAPPINGS = {"de": "Folien", "en": "Slides"}
 
 
 # Logging setup
@@ -400,10 +400,13 @@ async def create_course(course_name: str):
             logger.debug("Found course. Deleting and regenerating...")
             await delete_course(course_name)
             for topic in course.topics:
-                await nats_client.publish(
-                    subject="command.watcher.rescan",
-                    payload=json.dumps({"topic": f"{topic}"}).encode("utf-8"),
-                )
+                for tag in ["notebooks", "staging"]:
+                    await nats_client.publish(
+                        subject="command.watcher.rescan",
+                        payload=json.dumps({"topic": f"{topic}", "tag": tag}).encode(
+                            "utf-8"
+                        ),
+                    )
             logger.debug(f"Waiting {REGEN_DELAY} seconds before regenerating course")
             await asyncio.sleep(REGEN_DELAY)
             await copy_staged_files_for(course_name)
